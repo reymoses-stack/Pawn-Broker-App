@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "882576651805",
+    "project_id": "nexus-gold-erp",
+    "storage_bucket": "nexus-gold-erp.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:882576651805:android:713335fdfe01f8f42438f4",
+        "android_client_info": {
+          "package_name": "com.nexusgold.pawnbroker"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDqKkLpeGU_Cssv027PWnoGk42avsGK2BU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

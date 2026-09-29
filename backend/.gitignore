@@ -1,0 +1,20 @@
+# Binaries
+server
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/
+
+# Environment Variables & Secrets
+.env
+.env.*
+!.env.example
+
+# OS / Editor files
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo

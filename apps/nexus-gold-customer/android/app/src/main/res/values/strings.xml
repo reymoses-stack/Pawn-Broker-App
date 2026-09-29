@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Nexus Gold Customer</string>
+    <string name="title_activity_main">Nexus Gold Customer</string>
+    <string name="package_name">com.nexusgold.customer</string>
+    <string name="custom_url_scheme">com.nexusgold.customer</string>
+</resources>

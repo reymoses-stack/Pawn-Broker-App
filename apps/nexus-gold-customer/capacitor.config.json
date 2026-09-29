@@ -1,0 +1,10 @@
+{
+  "appId": "com.nexusgold.customer",
+  "appName": "Nexus Gold Customer",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https",
+    "cleartext": true
+  }
+}
