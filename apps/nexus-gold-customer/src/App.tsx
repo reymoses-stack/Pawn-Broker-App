@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Customer, Mortgage, Payment, PawnEnquiry } from './types';
 import { MOCK_BRANCH, MOCK_MORTGAGES, MOCK_PAYMENTS, MOCK_GOLD_RATES, MOCK_ENQUIRIES } from './data/mockData';
 import { Language, translations } from './i18n/translations';
@@ -13,6 +13,7 @@ import { GoldLoanCalculator } from './components/GoldLoanCalculator';
 import { PawnEnquiryForm } from './components/PawnEnquiryForm';
 import { BranchVaultView } from './components/BranchVaultView';
 import { CustomerReceiptModal } from './components/CustomerReceiptModal';
+import { backendApi } from './services/backendApi';
 import { 
   Calculator, 
   Sparkles, 
@@ -22,7 +23,8 @@ import {
   MessageCircle, 
   PlusCircle, 
   Clock, 
-  CheckCircle2 
+  CheckCircle2,
+  RefreshCw
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -87,8 +89,91 @@ export function App() {
     setActiveTab('enquiry');
   };
 
+  const [customerMortgages, setCustomerMortgages] = useState<Mortgage[]>([]);
+  const [customerPayments, setCustomerPayments] = useState<Payment[]>([]);
+  const [isLoadingLive, setIsLoadingLive] = useState<boolean>(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState<string>('');
+
+  const fetchLivePassbook = useCallback(async () => {
+    if (!currentCustomer) return;
+    setIsLoadingLive(true);
+    try {
+      const data = await backendApi.getPassbook(currentCustomer.mobile || currentCustomer.id);
+      if (data && data.mortgages && Array.isArray(data.mortgages) && data.mortgages.length > 0) {
+        const mappedMortgages: Mortgage[] = data.mortgages.map((m: any) => ({
+          id: m.id || m.mortgageNumber,
+          mortgageNumber: m.mortgageNumber || m.id,
+          customerId: m.customerId || currentCustomer.id,
+          branchCode: m.branchId || 'BR-01',
+          principalAmount: Number(m.principalAmount) || 0,
+          interestRate: Number(m.interestRate) || 1.5,
+          penaltyRateMonthly: Number(m.penaltyRateMonthly) || 1.0,
+          gracePeriodDays: Number(m.gracePeriodDays) || 7,
+          mortgageDate: m.mortgageDate || new Date().toISOString().split('T')[0],
+          maturityDate: m.maturityDate || '',
+          status: (m.status as any) || 'Active',
+          vaultLocation: m.packetId ? `Locker Packet: ${m.packetId}` : 'Main Branch Vault',
+          items: (m.items || []).map((it: any, idx: number) => ({
+            id: it.id || `ITM-${idx}`,
+            itemType: it.itemType || 'Gold Ornament',
+            description: it.description || it.itemType || 'Pledged Gold Ornaments',
+            purity: it.purity || '22K (916)',
+            grossWeight: Number(it.grossWeight) || 0,
+            stoneWeight: Number(it.stoneWeight) || 0,
+            netWeight: Number(it.netWeight) || Number(it.grossWeight) || 0,
+            marketValue: Number(it.marketValue) || Number(it.brokerValuation) || 0,
+          })),
+          totalValuation: (m.items || []).reduce((acc: number, it: any) => acc + (Number(it.marketValue) || 0), 0) || Number(m.principalAmount) * 1.33,
+          tokenNumber: m.packetId || m.mortgageNumber || m.id,
+          notes: m.notes,
+        }));
+        setCustomerMortgages(mappedMortgages);
+
+        if (data.payments && Array.isArray(data.payments)) {
+          const mappedPayments: Payment[] = data.payments.map((p: any) => ({
+            id: p.id || p.receiptNumber,
+            receiptNumber: p.receiptNumber || p.id,
+            mortgageId: p.mortgageId,
+            amount: Number(p.amount) || 0,
+            principalPaid: Number(p.principalPortion || p.principalPaid) || 0,
+            interestPaid: Number(p.interestPortion || p.interestPaid) || 0,
+            paymentDate: (p.paymentDate || p.createdAt || '').split('T')[0] || new Date().toISOString().split('T')[0],
+            paymentMode: p.paymentMode || 'UPI',
+            collectedBy: p.collectedBy || 'Staff'
+          }));
+          setCustomerPayments(mappedPayments);
+        }
+        setLastSyncedAt(new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }));
+        return;
+      }
+    } catch (e) {
+      console.warn('Live API passbook fetch failed, checking fallback', e);
+    } finally {
+      setIsLoadingLive(false);
+    }
+
+    // Fallback to local mock data if no live records or offline
+    const fallbackM = MOCK_MORTGAGES.filter(m => m.customerId === currentCustomer.id);
+    setCustomerMortgages(fallbackM);
+    const mIds = fallbackM.map(m => m.id);
+    setCustomerPayments(MOCK_PAYMENTS.filter(p => mIds.includes(p.mortgageId)));
+  }, [currentCustomer]);
+
+  useEffect(() => {
+    if (!currentCustomer) return;
+    fetchLivePassbook();
+    const interval = setInterval(() => {
+      fetchLivePassbook();
+    }, 8000);
+    return () => clearInterval(interval);
+  }, [currentCustomer, fetchLivePassbook]);
+
   const handleEnquirySubmitted = (enquiry: PawnEnquiry) => {
     setEnquiries(prev => [enquiry, ...prev]);
+    // Also post to backend so broker app receives it
+    backendApi.createEnquiry(enquiry).catch(err => {
+      console.warn('Enquiry backend post deferred:', err);
+    });
   };
 
   if (!currentCustomer) {
@@ -101,10 +186,6 @@ export function App() {
     );
   }
 
-  // Filter mortgages and payments for this logged-in customer
-  const customerMortgages = MOCK_MORTGAGES.filter(m => m.customerId === currentCustomer.id);
-  const mortgageIds = customerMortgages.map(m => m.id);
-  const customerPayments = MOCK_PAYMENTS.filter(p => mortgageIds.includes(p.mortgageId));
   const customerEnquiries = enquiries.filter(e => e.customerMobile === currentCustomer.mobile || currentCustomer.isNewCustomer);
 
   return (
@@ -271,6 +352,33 @@ export function App() {
             ) : (
               /* Existing Customer Dashboard */
               <div className="space-y-6">
+                {/* Live Vault Sync Status Banner */}
+                <div className="flex items-center justify-between bg-emerald-50/90 border border-emerald-200/90 rounded-2xl px-4 py-2.5 text-xs shadow-2xs">
+                  <div className="flex items-center gap-2">
+                    <span className="relative flex h-2.5 w-2.5">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+                    </span>
+                    <span className="font-bold text-emerald-950 text-xs">
+                      {language === 'ta' ? 'அடமான பெட்டகத்துடன் நேரடி இணைப்பு (Cloud Vault)' : 'Live Connected to Pawnbroker Vault'}
+                    </span>
+                    {lastSyncedAt && (
+                      <span className="text-emerald-700 text-[11px] hidden sm:inline font-mono">
+                        • {lastSyncedAt}
+                      </span>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => fetchLivePassbook()}
+                    disabled={isLoadingLive}
+                    className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] transition shadow-2xs active:scale-95 cursor-pointer disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${isLoadingLive ? 'animate-spin' : ''}`} />
+                    <span>{isLoadingLive ? (language === 'ta' ? 'புதுப்பிக்கிறது...' : 'Syncing...') : (language === 'ta' ? 'புதுப்பி' : 'Refresh')}</span>
+                  </button>
+                </div>
+
                 <DashboardOverview
                   mortgages={customerMortgages}
                   payments={customerPayments}

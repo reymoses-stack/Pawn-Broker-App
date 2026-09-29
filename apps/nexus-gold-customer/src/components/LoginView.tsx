@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { ShieldCheck, Phone, ArrowRight, Lock, Sparkles, Building2 } from 'lucide-react';
+import { ShieldCheck, Phone, ArrowRight, Lock, Sparkles, Building2, Loader2 } from 'lucide-react';
 import { Customer } from '../types';
 import { MOCK_CUSTOMERS, MOCK_BRANCH } from '../data/mockData';
 import { Language, translations } from '../i18n/translations';
+import { backendApi } from '../services/backendApi';
 
 interface LoginViewProps {
   onLoginSuccess: (customer: Customer) => void;
@@ -24,8 +25,10 @@ export const LoginView: React.FC<LoginViewProps> = ({
 
   const [customerName, setCustomerName] = useState('');
   const [isNewUser, setIsNewUser] = useState(false);
+  const [isCheckingCustomer, setIsCheckingCustomer] = useState(false);
+  const [remoteCustomer, setRemoteCustomer] = useState<Customer | null>(null);
 
-  const handleSendOtp = (e: React.FormEvent) => {
+  const handleSendOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
     const cleanNumber = phoneNumber.replace(/\D/g, '');
@@ -34,13 +37,51 @@ export const LoginView: React.FC<LoginViewProps> = ({
       return;
     }
 
-    const matchedCustomer = MOCK_CUSTOMERS.find(c => c.mobile.endsWith(cleanNumber));
-    if (!matchedCustomer) {
-      // New Customer - allow login and enquiry!
-      setIsNewUser(true);
-    } else {
+    setIsCheckingCustomer(true);
+    let foundCustomer: Customer | null = null;
+
+    // 1. Try Live Supabase Cloud API
+    try {
+      const passbook = await backendApi.getPassbook(cleanNumber);
+      if (passbook && passbook.customer) {
+        const c = passbook.customer;
+        foundCustomer = {
+          id: c.id,
+          name: c.name,
+          mobile: c.mobile,
+          email: c.email,
+          photoUrl: c.photoUrl,
+          address: c.address || 'Mint Street, Sowcarpet',
+          city: c.city || MOCK_BRANCH.city.split(',')[0],
+          isNewCustomer: false,
+          kycRecord: {
+            maskedId: c.aadhaarMasked || 'XXXX-XXXX-8921',
+            verifiedDate: (c.createdAt || '').split('T')[0] || new Date().toISOString().split('T')[0],
+            status: (c.kycStatus === 'Verified' ? 'VERIFIED' : 'PENDING') as 'VERIFIED' | 'PENDING'
+          }
+        };
+      }
+    } catch (err) {
+      console.warn('Live API passbook check deferred/offline', err);
+    }
+
+    // 2. Fallback to local mock customers if live API didn't find them
+    if (!foundCustomer) {
+      const matchedMock = MOCK_CUSTOMERS.find(c => c.mobile.endsWith(cleanNumber));
+      if (matchedMock) {
+        foundCustomer = matchedMock;
+      }
+    }
+
+    setIsCheckingCustomer(false);
+
+    if (foundCustomer) {
+      setRemoteCustomer(foundCustomer);
+      setCustomerName(foundCustomer.name);
       setIsNewUser(false);
-      setCustomerName(matchedCustomer.name);
+    } else {
+      setRemoteCustomer(null);
+      setIsNewUser(true);
     }
 
     setOtpStep(true);
@@ -58,27 +99,35 @@ export const LoginView: React.FC<LoginViewProps> = ({
     }
 
     const cleanNumber = phoneNumber.replace(/\D/g, '');
-    const matchedCustomer = MOCK_CUSTOMERS.find(c => c.mobile.endsWith(cleanNumber));
     
+    // 1. If customer was loaded from live Supabase API, log them in directly
+    if (remoteCustomer) {
+      onLoginSuccess(remoteCustomer);
+      return;
+    }
+
+    // 2. Otherwise check mock customers
+    const matchedCustomer = MOCK_CUSTOMERS.find(c => c.mobile.endsWith(cleanNumber));
     if (matchedCustomer) {
       onLoginSuccess(matchedCustomer);
-    } else {
-      // Synthesize new customer profile
-      const newCustomer: Customer = {
-        id: `CUST-NEW-${cleanNumber.slice(-4)}`,
-        name: customerName.trim() || `Customer (+91 ${cleanNumber})`,
-        mobile: cleanNumber,
-        isNewCustomer: true,
-        address: 'New Customer Prospect',
-        city: MOCK_BRANCH.city.split(',')[0],
-        kycRecord: {
-          maskedId: 'Awaiting Counter KYC',
-          verifiedDate: new Date().toISOString().split('T')[0],
-          status: 'PENDING'
-        }
-      };
-      onLoginSuccess(newCustomer);
+      return;
     }
+
+    // 3. Synthesize new customer profile
+    const newCustomer: Customer = {
+      id: `CUST-NEW-${cleanNumber.slice(-4)}`,
+      name: customerName.trim() || `Customer (+91 ${cleanNumber})`,
+      mobile: cleanNumber,
+      isNewCustomer: true,
+      address: 'New Customer Prospect',
+      city: MOCK_BRANCH.city.split(',')[0],
+      kycRecord: {
+        maskedId: 'Awaiting Counter KYC',
+        verifiedDate: new Date().toISOString().split('T')[0],
+        status: 'PENDING'
+      }
+    };
+    onLoginSuccess(newCustomer);
   };
 
   const handleQuickDemoLogin = (customer: Customer) => {
@@ -211,10 +260,20 @@ export const LoginView: React.FC<LoginViewProps> = ({
 
                 <button
                   type="submit"
-                  className="w-full py-3.5 px-6 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white font-black text-xs tracking-wide shadow-md shadow-amber-500/20 transition active:scale-98 flex items-center justify-center gap-2 cursor-pointer"
+                  disabled={isCheckingCustomer}
+                  className="w-full py-3.5 px-6 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 disabled:opacity-70 text-white font-black text-xs tracking-wide shadow-md shadow-amber-500/20 transition active:scale-98 flex items-center justify-center gap-2 cursor-pointer"
                 >
-                  <span>{t.sendOtp}</span>
-                  <ArrowRight className="w-4 h-4" />
+                  {isCheckingCustomer ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>{language === 'ta' ? 'சரிபார்க்கிறது...' : 'Checking Account...'}</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>{t.sendOtp}</span>
+                      <ArrowRight className="w-4 h-4" />
+                    </>
+                  )}
                 </button>
               </form>
             ) : (

@@ -14,6 +14,7 @@ import {
   DEFAULT_RBAC_MATRIX
 } from '../data/seedData';
 import { subscribeToEnquiries, updateRemoteEnquiryStatus } from '../utils/enquirySyncService';
+import { backendApi } from '../services/backendApi';
 import { calculateInterest } from '../utils/interestEngine';
 import { 
   getGoodReturnsRatesForCity, 
@@ -672,6 +673,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
     setCustomers(prev => [newCustomer, ...prev]);
     logAudit('CREATE', 'CUSTOMER', newCustomer.id, `Created customer profile for ${newCustomer.name} (${newCustomer.customerTier})`);
+    
+    // Sync to backend cloud database (Supabase)
+    backendApi.createCustomer({
+      id: newCustomer.id,
+      name: newCustomer.name,
+      mobile: newCustomer.mobile,
+      dateOfBirth: newCustomer.dateOfBirth,
+      address: newCustomer.address,
+      city: newCustomer.city,
+      pincode: newCustomer.pincode,
+      branchId: currentBranch.id
+    }).catch(err => console.warn('Customer cloud sync deferred:', err));
+
     return newCustomer;
   };
 
@@ -875,6 +889,41 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     logAudit('CREATE', 'MORTGAGE', mortgageId, `Created pawn mortgage ${mortgageId} for ₹${params.principalAmount.toLocaleString('en-IN')}`);
     logAudit('APPROVE', 'MORTGAGE', mortgageId, `Approved loan disbursement via ${params.disbursementMode}`);
 
+    // Sync to backend cloud API (Supabase) so Customer App receives it instantly
+    backendApi.createMortgage({
+      id: mortgageId,
+      mortgageNumber: mortgageId,
+      customerId: params.customerId,
+      branchId: currentBranch.id,
+      mortgageDate: newMortgage.mortgageDate,
+      maturityDate: params.maturityDate,
+      principalAmount: params.principalAmount,
+      interestRate: finalInterestRate,
+      penaltyRateMonthly: finalPenaltyRate,
+      gracePeriodDays: finalGracePeriod,
+      interestType: rule.rateType,
+      interestFrequency: 'Monthly',
+      processingFee: params.processingFee,
+      otherCharges: params.otherCharges,
+      outstandingPrincipal: params.principalAmount,
+      outstandingInterest: 0,
+      status: 'Active',
+      disbursementMode: params.disbursementMode,
+      packetId: packetId,
+      items: params.items.map((it) => ({
+        itemType: it.itemType || 'Ornament',
+        description: it.description || it.itemType || 'Gold Ornaments',
+        grossWeight: Number(it.grossWeight) || 0,
+        stoneWeight: Number(it.stoneWeight) || 0,
+        netWeight: Number(it.netWeight) || Number(it.grossWeight) || 0,
+        purity: it.purity || '22K',
+        marketValue: Number(it.marketValue) || 0,
+        brokerValuation: Number(it.brokerValuation) || 0,
+      }))
+    }).catch(err => {
+      console.warn('Backend sync for new mortgage deferred/offline:', err);
+    });
+
     return newMortgage;
   };
 
@@ -991,6 +1040,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setPayments(prev => [newPayment, ...prev]);
     setLedger(prev => [...ledgerEntries, ...prev]);
     logAudit('PAYMENT', 'PAYMENT', paymentId, `Collected ₹${params.amount.toLocaleString('en-IN')} on ${mortgage.mortgageNumber}`);
+
+    // Sync to backend cloud API (Supabase) so Customer App receives it instantly
+    backendApi.createPayment({
+      id: paymentId,
+      mortgageId: params.mortgageId,
+      customerId: mortgage.customerId,
+      branchId: currentBranch.id,
+      paymentDate: new Date().toISOString(),
+      amount: params.amount,
+      principalPaid: params.allocation.principal,
+      interestPaid: params.allocation.interest,
+      penaltyPaid: params.allocation.penalties,
+      paymentMethod: params.paymentMethod,
+      receiptNumber: paymentId,
+      notes: `Receipt ${paymentId} for loan ${mortgage.mortgageNumber}`
+    }).catch(err => {
+      console.warn('Backend sync for payment deferred/offline:', err);
+    });
 
     return newPayment;
   };

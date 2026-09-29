@@ -3,6 +3,7 @@ import { PawnEnquiry } from '../types';
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8080';
 
 const SYNC_ENDPOINTS = [
+  'https://pawn-broker-api.vercel.app/api/enquiries',
   `${API_BASE}/api/enquiries`,
   '/api/enquiries',
   'http://localhost:8080/api/enquiries',

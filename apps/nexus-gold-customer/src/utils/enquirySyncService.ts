@@ -4,6 +4,7 @@ const getSyncEndpoints = () => {
   const envApi = import.meta.env.VITE_API_URL;
   const custom = typeof window !== 'undefined' ? localStorage.getItem('broker_server_url') : null;
   return [
+    'https://pawn-broker-api.vercel.app/api/enquiries',
     ...(envApi ? [`${envApi.replace(/\/$/, '')}/api/enquiries`] : []),
     ...(custom ? [`${custom.replace(/\/$/, '')}/api/enquiries`] : []),
     'http://localhost:8080/api/enquiries',

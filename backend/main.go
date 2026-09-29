@@ -164,6 +164,7 @@ type LiveRates struct {
 type AppServer struct {
 	db        *sql.DB
 	useDB     bool
+	dbErr     string
 	mu        sync.RWMutex
 	pincodes  []PincodeRecord
 	enquiries []PawnEnquiry
@@ -174,10 +175,11 @@ type AppServer struct {
 	rates     LiveRates
 }
 
-func NewAppServer(db *sql.DB) *AppServer {
+func NewAppServer(db *sql.DB, dbErr string) *AppServer {
 	srv := &AppServer{
 		db:    db,
 		useDB: db != nil,
+		dbErr: dbErr,
 		rates: LiveRates{
 			City: "Chennai",
 			Rates: map[string]float64{
@@ -318,12 +320,14 @@ func jsonResponse(w http.ResponseWriter, status int, data interface{}) {
 
 func (s *AppServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 	dbStatus := "local memory fallback"
-	if s.useDB {
+	if s.useDB && s.db != nil {
 		if err := s.db.Ping(); err == nil {
 			dbStatus = "connected (Supabase PostgreSQL)"
 		} else {
 			dbStatus = fmt.Sprintf("db ping error: %v", err)
 		}
+	} else if s.dbErr != "" {
+		dbStatus = "fallback: " + s.dbErr
 	}
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
@@ -569,6 +573,24 @@ func (s *AppServer) handleCustomers(w http.ResponseWriter, r *http.Request) {
 		if c.CreatedAt == "" {
 			c.CreatedAt = time.Now().Format(time.RFC3339)
 		}
+		if c.BranchID == "" {
+			c.BranchID = "BR-CH-01"
+		}
+		if c.CustomerTier == "" {
+			c.CustomerTier = "Standard"
+		}
+		if s.useDB && s.db != nil {
+			s.db.Exec(`
+				INSERT INTO customers (id, name, mobile, address, city, pincode, occupation, photo_url, kyc_status, branch_id, customer_tier, created_at, updated_at)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
+				ON CONFLICT (id) DO UPDATE SET
+					name = EXCLUDED.name,
+					mobile = EXCLUDED.mobile,
+					address = EXCLUDED.address,
+					photo_url = EXCLUDED.photo_url,
+					updated_at = NOW()
+			`, c.ID, c.Name, c.Mobile, c.Address, c.City, c.Pincode, c.Occupation, c.PhotoURL, c.KycStatus, c.BranchID, c.CustomerTier)
+		}
 		s.customers = append([]Customer{c}, s.customers...)
 		jsonResponse(w, http.StatusCreated, c)
 
@@ -645,7 +667,56 @@ func (s *AppServer) handleMortgages(w http.ResponseWriter, r *http.Request) {
 		if m.Status == "" {
 			m.Status = "Active"
 		}
-		s.mortgages = append([]Mortgage{m}, s.mortgages...)
+		if m.BranchID == "" {
+			m.BranchID = "BR-CH-01"
+		}
+		if m.MortgageDate == "" {
+			m.MortgageDate = time.Now().Format("2006-01-02")
+		}
+		if m.MaturityDate == "" {
+			m.MaturityDate = time.Now().Add(90 * 24 * time.Hour).Format("2006-01-02")
+		}
+		if m.PacketID == "" {
+			m.PacketID = fmt.Sprintf("PKT-%d", time.Now().UnixMilli()%1000000)
+		}
+		if m.OutstandingPrincipal == 0 && m.PrincipalAmount > 0 {
+			m.OutstandingPrincipal = m.PrincipalAmount
+		}
+
+		if s.useDB && s.db != nil {
+			itemsJSON, _ := json.Marshal(m.Items)
+			s.db.Exec(`
+				INSERT INTO mortgages (
+					id, mortgage_number, customer_id, branch_id, mortgage_date, maturity_date,
+					principal_amount, interest_rate, interest_type, interest_frequency,
+					penalty_rate_monthly, grace_period_days, processing_fee, other_charges,
+					outstanding_principal, outstanding_interest, status, disbursement_mode,
+					packet_id, items, created_at, updated_at
+				) VALUES (
+					$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, NOW(), NOW()
+				) ON CONFLICT (id) DO UPDATE SET
+					outstanding_principal = EXCLUDED.outstanding_principal,
+					outstanding_interest = EXCLUDED.outstanding_interest,
+					status = EXCLUDED.status,
+					updated_at = NOW()
+			`, m.ID, m.MortgageNumber, m.CustomerID, m.BranchID, m.MortgageDate, m.MaturityDate,
+			   m.PrincipalAmount, m.InterestRate, m.InterestType, m.InterestFrequency,
+			   m.PenaltyRateMonthly, m.GracePeriodDays, m.ProcessingFee, m.OtherCharges,
+			   m.OutstandingPrincipal, m.OutstandingInterest, m.Status, m.DisbursementMode,
+			   m.PacketID, string(itemsJSON))
+		}
+
+		found := false
+		for idx, existing := range s.mortgages {
+			if existing.ID == m.ID {
+				s.mortgages[idx] = m
+				found = true
+				break
+			}
+		}
+		if !found {
+			s.mortgages = append([]Mortgage{m}, s.mortgages...)
+		}
 		jsonResponse(w, http.StatusCreated, m)
 
 	default:
@@ -685,6 +756,53 @@ func (s *AppServer) handlePayments(w http.ResponseWriter, r *http.Request) {
 		if p.PaymentDate == "" {
 			p.PaymentDate = time.Now().Format(time.RFC3339)
 		}
+		if p.BranchID == "" {
+			p.BranchID = "BR-CH-01"
+		}
+		if p.ReceiptNumber == "" {
+			p.ReceiptNumber = fmt.Sprintf("RCP-%d", time.Now().UnixMilli()%1000000)
+		}
+
+		if s.useDB && s.db != nil {
+			s.db.Exec(`
+				INSERT INTO payments (
+					id, mortgage_id, customer_id, branch_id, payment_date, amount,
+					principal_portion, interest_portion, penalty_portion, payment_mode,
+					collected_by, receipt_number, notes, created_at
+				) VALUES (
+					$1, $2, $3, $4, NOW(), $5, $6, $7, $8, $9, $10, $11, $12, NOW()
+				) ON CONFLICT (id) DO NOTHING
+			`, p.ID, p.MortgageID, p.CustomerID, p.BranchID, p.Amount,
+			   p.PrincipalPortion, p.InterestPortion, p.PenaltyPortion, p.PaymentMode,
+			   p.CollectedBy, p.ReceiptNumber, p.Notes)
+
+			if p.PrincipalPortion > 0 {
+				s.db.Exec(`
+					UPDATE mortgages 
+					SET outstanding_principal = GREATEST(0, outstanding_principal - $1),
+					    last_payment_date = NOW(),
+					    status = CASE WHEN outstanding_principal - $1 <= 0 THEN 'Closed' ELSE status END,
+					    updated_at = NOW()
+					WHERE id = $2
+				`, p.PrincipalPortion, p.MortgageID)
+			}
+		}
+
+		// Update in-memory mortgage balance
+		for idx, m := range s.mortgages {
+			if m.ID == p.MortgageID {
+				if p.PrincipalPortion > 0 {
+					s.mortgages[idx].OutstandingPrincipal -= p.PrincipalPortion
+					if s.mortgages[idx].OutstandingPrincipal <= 0 {
+						s.mortgages[idx].OutstandingPrincipal = 0
+						s.mortgages[idx].Status = "Closed"
+					}
+				}
+				s.mortgages[idx].LastPaymentDate = p.PaymentDate
+				break
+			}
+		}
+
 		s.payments = append([]PaymentRecord{p}, s.payments...)
 		jsonResponse(w, http.StatusCreated, p)
 
@@ -721,7 +839,16 @@ func (s *AppServer) handleCustomerPassbook(w http.ResponseWriter, r *http.Reques
 	defer s.mu.RUnlock()
 
 	custID := r.URL.Query().Get("c")
+	if custID == "" {
+		custID = r.URL.Query().Get("customer")
+	}
+	if custID == "" {
+		custID = r.URL.Query().Get("mobile")
+	}
 	mortNum := r.URL.Query().Get("m")
+	if mortNum == "" {
+		mortNum = r.URL.Query().Get("number")
+	}
 
 	var matchedCust *Customer
 	var matchedMort *Mortgage
@@ -769,9 +896,18 @@ func (s *AppServer) handleCustomerPassbook(w http.ResponseWriter, r *http.Reques
 	}
 
 	totalOutstanding := 0.0
+	mortgageIDMap := make(map[string]bool)
 	for _, m := range custMortgages {
+		mortgageIDMap[m.ID] = true
 		if m.Status == "Active" || m.Status == "Due" || m.Status == "Overdue" {
 			totalOutstanding += m.OutstandingPrincipal
+		}
+	}
+
+	var custPayments []PaymentRecord
+	for _, p := range s.payments {
+		if mortgageIDMap[p.MortgageID] || (matchedCust != nil && p.CustomerID == matchedCust.ID) {
+			custPayments = append(custPayments, p)
 		}
 	}
 
@@ -779,6 +915,7 @@ func (s *AppServer) handleCustomerPassbook(w http.ResponseWriter, r *http.Reques
 		"customer":         matchedCust,
 		"activeMortgage":   matchedMort,
 		"mortgages":        custMortgages,
+		"payments":         custPayments,
 		"totalOutstanding": totalOutstanding,
 		"rates":            s.rates,
 		"verified":         true,
@@ -808,65 +945,84 @@ func withCORS(next http.Handler) http.Handler {
 }
 
 // ----------------------------------------------------------------------------
-// MAIN
+// VERCEL SERVERLESS HANDLER
 // ----------------------------------------------------------------------------
 
-func main() {
-	// 1. Load environment variables
-	_ = godotenv.Load()
+var (
+	appServer *AppServer
+	apiMux    http.Handler
+	initOnce  sync.Once
+)
 
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
-	}
+func initialize() {
+	_ = godotenv.Load()
 
 	dbURL := os.Getenv("DATABASE_URL")
 	var db *sql.DB
 	var err error
+	var dbErr string
 
 	if dbURL != "" {
 		db, err = sql.Open("postgres", dbURL)
 		if err != nil {
-			log.Printf("⚠️ Warning: Could not open PostgreSQL driver: %v", err)
+			dbErr = fmt.Sprintf("sql.Open error: %v", err)
+			log.Printf("⚠️ Vercel Go: %s", dbErr)
 		} else if err = db.Ping(); err != nil {
-			log.Printf("⚠️ Warning: PostgreSQL ping failed: %v. Running with local fallback.", err)
+			dbErr = fmt.Sprintf("db.Ping error: %v", err)
+			log.Printf("⚠️ Vercel Go: %s", dbErr)
 			db = nil
 		} else {
-			log.Printf("✅ Successfully connected to Supabase PostgreSQL database!")
+			log.Printf("✅ Vercel Go: Successfully connected to Supabase PostgreSQL database!")
 		}
 	} else {
-		log.Println("ℹ️  DATABASE_URL not set in .env. Running with local fallback state.")
+		dbErr = "DATABASE_URL environment variable is not set"
+		log.Println("ℹ️ Vercel Go: DATABASE_URL not set. Running with fallback state.")
 	}
 
-	srv := NewAppServer(db)
+	appServer = NewAppServer(db, dbErr)
 	mux := http.NewServeMux()
 
-	// API Routing
-	mux.HandleFunc("/api/health", srv.handleHealth)
-	mux.HandleFunc("/api/pincodes", srv.handlePincodes)
-	mux.HandleFunc("/api/enquiries", srv.handleEnquiries)
-	mux.HandleFunc("/api/customers", srv.handleCustomers)
-	mux.HandleFunc("/api/mortgages", srv.handleMortgages)
-	mux.HandleFunc("/api/payments", srv.handlePayments)
-	mux.HandleFunc("/api/rates", srv.handleRates)
-	mux.HandleFunc("/api/portal/passbook", srv.handleCustomerPassbook)
+	// Register with /api/ prefix
+	mux.HandleFunc("/api/health", appServer.handleHealth)
+	mux.HandleFunc("/api/pincodes", appServer.handlePincodes)
+	mux.HandleFunc("/api/enquiries", appServer.handleEnquiries)
+	mux.HandleFunc("/api/customers", appServer.handleCustomers)
+	mux.HandleFunc("/api/mortgages", appServer.handleMortgages)
+	mux.HandleFunc("/api/payments", appServer.handlePayments)
+	mux.HandleFunc("/api/rates", appServer.handleRates)
+	mux.HandleFunc("/api/portal/passbook", appServer.handleCustomerPassbook)
 
-	handler := withCORS(mux)
+	// Fallbacks without /api/
+	mux.HandleFunc("/health", appServer.handleHealth)
+	mux.HandleFunc("/pincodes", appServer.handlePincodes)
+	mux.HandleFunc("/enquiries", appServer.handleEnquiries)
+	mux.HandleFunc("/customers", appServer.handleCustomers)
+	mux.HandleFunc("/mortgages", appServer.handleMortgages)
+	mux.HandleFunc("/payments", appServer.handlePayments)
+	mux.HandleFunc("/rates", appServer.handleRates)
+	mux.HandleFunc("/portal/passbook", appServer.handleCustomerPassbook)
 
+	apiMux = withCORS(mux)
+}
+
+// Handler is the primary entrypoint for Vercel Serverless Functions (Go runtime)
+func Handler(w http.ResponseWriter, r *http.Request) {
+	initOnce.Do(initialize)
+	apiMux.ServeHTTP(w, r)
+}
+
+func main() {
+	initialize()
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
 	fmt.Println("==================================================================")
 	fmt.Printf("🚀 Nexus Gold Go Backend Engine running on http://localhost:%s\n", port)
-	fmt.Println("🔌 APIs connected:")
-	fmt.Println("   - /api/health")
-	fmt.Println("   - /api/pincodes (Doorstep Service Pincodes)")
-	fmt.Println("   - /api/enquiries (Customer Gold Loan Enquiries)")
-	fmt.Println("   - /api/customers (Master Customer Directory)")
-	fmt.Println("   - /api/mortgages (Active Pledges & Barcode Records)")
-	fmt.Println("   - /api/payments  (Collections & Repayments)")
-	fmt.Println("   - /api/rates     (GoodReturns Bullion Rates)")
-	fmt.Println("   - /api/portal/passbook (Web Passbook)")
 	fmt.Println("==================================================================")
-
-	if err := http.ListenAndServe(":"+port, handler); err != nil {
+	if err := http.ListenAndServe(":"+port, apiMux); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
 }
+
+
