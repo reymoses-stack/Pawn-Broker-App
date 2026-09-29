@@ -1,6 +1,6 @@
 # 🪙 Gold Nexus Suite
 
-Enterprise Pawn Brokerage, Gold Loan Management, Customer Passbook & Business OS Ecosystem.
+Enterprise Pawn Brokerage, Gold Loan Management & Customer Mobile Passbook Ecosystem.
 
 ```
                           ┌───────────────────────────┐
@@ -9,17 +9,17 @@ Enterprise Pawn Brokerage, Gold Loan Management, Customer Passbook & Business OS
                                         │
                                         ▼
                           ┌───────────────────────────┐
-                          │      Go Backend API       │
-                          │   (localhost:8080/Cloud)  │
+                          │   Go Backend Serverless   │
+                          │   (Vercel Edge / Go API)  │
                           └──────┬──────────┬─────────┘
                                  │          │
-         ┌───────────────────────┼──────────┴───────────────────────┐
-         ▼                       ▼                                  ▼
-┌─────────────────┐    ┌─────────────────┐                ┌──────────────────┐
-│  Pawn Broker    │    │ Customer Mobile │                │ Business OS      │
-│  Admin Portal   │    │ & Web App       │                │ & Analytics      │
-│  (Vercel SPA)   │    │ (Vercel SPA)    │                │ (Vercel SPA)     │
-└─────────────────┘    └─────────────────┘                └──────────────────┘
+         ┌───────────────────────┘          └───────────────────────┐
+         ▼                                                          ▼
+┌─────────────────┐                                        ┌─────────────────┐
+│  Pawn Broker    │                                        │ Customer Mobile │
+│  Admin Portal   │                                        │ & Web Passbook  │
+│  (Vercel SPA)   │                                        │ (Vercel SPA)    │
+└─────────────────┘                                        └─────────────────┘
 ```
 
 ---
@@ -28,15 +28,18 @@ Enterprise Pawn Brokerage, Gold Loan Management, Customer Passbook & Business OS
 
 ```
 gold-nexus-suite/
+├── api/                      # Native Vercel Go Serverless Function (Zero Cold Start)
+│   └── index.go              # Edge router, CORS, Supabase Postgres Pooler handler
 ├── apps/
 │   ├── gold-pawn-broker/     # Pawn Broker POS, A4 & 80mm Thermal Receipt Generator, Barcode/QR Scanner
-│   ├── nexus-gold-customer/  # Customer Doorstep Loan Calculator, Mobile Passbook & Online Repayments
-│   └── gold-business-os/     # Executive Multi-Branch Dashboard, Liquidity & Capital Management
-├── backend/                  # High-Performance Golang HTTP Server + Supabase DB Migrations
+│   └── nexus-gold-customer/  # Customer Doorstep Loan Calculator, Mobile Passbook & Online Repayments
+├── backend/                  # Standalone Golang HTTP Server for local development & Docker
 │   ├── main.go               # REST API, Seed Data, Supabase Postgres Connector
+│   ├── Dockerfile            # Multi-stage production container build
 │   ├── supabase/
 │   │   └── schema.sql        # Supabase DDL (Tables, Indexes, RLS Policies, Seed Records)
 │   └── .env.example
+├── vercel.json               # Vercel Serverless Function routing
 ├── package.json              # NPM Workspaces Root
 └── README.md
 ```
@@ -48,7 +51,6 @@ gold-nexus-suite/
 ### 1. Start the Golang Backend
 ```bash
 cd backend
-cp .env.example .env
 # Edit .env with your Supabase Connection String (or run in fallback in-memory mode)
 go run main.go
 # Running on http://localhost:8080
@@ -62,9 +64,6 @@ npm run dev:broker
 
 # Run Customer App (Port 5173)
 npm run dev:customer
-
-# Run Business OS (Port 5175)
-npm run dev:business
 ```
 
 ---
@@ -73,54 +72,17 @@ npm run dev:business
 
 1. Open your project in the [Supabase Dashboard](https://supabase.com).
 2. Go to the **SQL Editor** tab.
-3. Paste the contents of [`backend/supabase/schema.sql`](file:///Users/revanthmoses/.gemini/antigravity-ide/scratch/gold-nexus-suite/backend/supabase/schema.sql) and click **Run**.
+3. Paste the contents of `backend/supabase/schema.sql` and click **Run**.
 4. Navigate to **Project Settings** -> **Database** -> **Connection string** (URI).
 5. Copy the connection URI and paste it into `backend/.env` as `DATABASE_URL`.
 
 ---
 
-## 🚀 Vercel Deployment Guide
+## 🚀 Live Production Links (Vercel)
 
-Deploy each frontend app directly to Vercel:
-
-### App 1: Pawn Broker Admin Portal (`apps/gold-pawn-broker`)
-- **Root Directory**: `apps/gold-pawn-broker`
-- **Framework Preset**: `Vite`
-- **Build Command**: `npm run build`
-- **Output Directory**: `dist`
-- **Environment Variables**:
-  - `VITE_API_URL`: Your deployed Go Backend URL (or leave empty for fallback)
-
-### App 2: Customer App (`apps/nexus-gold-customer`)
-- **Root Directory**: `apps/nexus-gold-customer`
-- **Framework Preset**: `Vite`
-- **Build Command**: `npm run build`
-- **Output Directory**: `dist`
-- **Environment Variables**:
-  - `VITE_API_URL`: Your deployed Go Backend URL
-
-### App 3: Business OS (`apps/gold-business-os`)
-- **Root Directory**: `apps/gold-business-os`
-- **Framework Preset**: `Vite`
-- **Build Command**: `npm run build`
-- **Output Directory**: `dist`
-- **Environment Variables**:
-  - `VITE_API_URL`: Your deployed Go Backend URL
-
----
-
-## ☁️ Backend Deployment Guide (Render / Railway / Fly.io)
-
-### Deploying to Render
-1. Connect this GitHub repository.
-2. Select **Web Service**.
-3. Set **Root Directory**: `backend`
-4. Set **Environment**: `Go`
-5. **Build Command**: `go build -o server main.go`
-6. **Start Command**: `./server`
-7. Add Environment Variable:
-   - `DATABASE_URL`: `postgresql://postgres:[PASSWORD]@[HOST]:5432/postgres`
-   - `PORT`: `8080` (or Render default)
+- **Go Backend API**: [https://pawn-broker-api.vercel.app](https://pawn-broker-api.vercel.app)
+- **Pawn Broker Admin**: [https://pawn-broker-admin.vercel.app](https://pawn-broker-admin.vercel.app)
+- **Customer App**: [https://nexus-gold-customer.vercel.app](https://nexus-gold-customer.vercel.app)
 
 ---
 

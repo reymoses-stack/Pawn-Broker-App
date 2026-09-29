@@ -9,10 +9,8 @@
   "scripts": {
     "dev:broker": "npm run dev --workspace=apps/gold-pawn-broker",
     "dev:customer": "npm run dev --workspace=apps/nexus-gold-customer",
-    "dev:business": "npm run dev --workspace=apps/gold-business-os",
     "build:broker": "npm run build --workspace=apps/gold-pawn-broker",
     "build:customer": "npm run build --workspace=apps/nexus-gold-customer",
-    "build:business": "npm run build --workspace=apps/gold-business-os",
     "build:all": "npm run build --workspaces",
     "start:backend": "cd backend && go run main.go"
   },
