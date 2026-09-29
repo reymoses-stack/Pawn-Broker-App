@@ -164,6 +164,7 @@ type LiveRates struct {
 type AppServer struct {
 	db        *sql.DB
 	useDB     bool
+	dbErr     string
 	mu        sync.RWMutex
 	pincodes  []PincodeRecord
 	enquiries []PawnEnquiry
@@ -174,10 +175,11 @@ type AppServer struct {
 	rates     LiveRates
 }
 
-func NewAppServer(db *sql.DB) *AppServer {
+func NewAppServer(db *sql.DB, dbErr string) *AppServer {
 	srv := &AppServer{
 		db:    db,
 		useDB: db != nil,
+		dbErr: dbErr,
 		rates: LiveRates{
 			City: "Chennai",
 			Rates: map[string]float64{
@@ -318,12 +320,14 @@ func jsonResponse(w http.ResponseWriter, status int, data interface{}) {
 
 func (s *AppServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 	dbStatus := "local memory fallback"
-	if s.useDB {
+	if s.useDB && s.db != nil {
 		if err := s.db.Ping(); err == nil {
 			dbStatus = "connected (Supabase PostgreSQL)"
 		} else {
 			dbStatus = fmt.Sprintf("db ping error: %v", err)
 		}
+	} else if s.dbErr != "" {
+		dbStatus = "fallback: " + s.dbErr
 	}
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
@@ -823,22 +827,26 @@ func initialize() {
 	dbURL := os.Getenv("DATABASE_URL")
 	var db *sql.DB
 	var err error
+	var dbErr string
 
 	if dbURL != "" {
 		db, err = sql.Open("postgres", dbURL)
 		if err != nil {
-			log.Printf("⚠️ Vercel Go: Could not open PostgreSQL driver: %v", err)
+			dbErr = fmt.Sprintf("sql.Open error: %v", err)
+			log.Printf("⚠️ Vercel Go: %s", dbErr)
 		} else if err = db.Ping(); err != nil {
-			log.Printf("⚠️ Vercel Go: PostgreSQL ping failed: %v. Running with local fallback.", err)
+			dbErr = fmt.Sprintf("db.Ping error: %v", err)
+			log.Printf("⚠️ Vercel Go: %s", dbErr)
 			db = nil
 		} else {
 			log.Printf("✅ Vercel Go: Successfully connected to Supabase PostgreSQL database!")
 		}
 	} else {
+		dbErr = "DATABASE_URL environment variable is not set"
 		log.Println("ℹ️ Vercel Go: DATABASE_URL not set. Running with fallback state.")
 	}
 
-	appServer = NewAppServer(db)
+	appServer = NewAppServer(db, dbErr)
 	mux := http.NewServeMux()
 
 	// Register with /api/ prefix
