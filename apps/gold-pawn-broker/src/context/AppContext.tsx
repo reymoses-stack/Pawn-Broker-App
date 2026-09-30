@@ -468,6 +468,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return () => unsubscribe();
   }, []);
 
+  // Hydrate admin rates from cloud backend on launch
+  useEffect(() => {
+    backendApi.getRates()
+      .then(data => {
+        if (data && data.rates && data.rates['24K']) {
+          const r24 = Number(data.rates['24K']);
+          const r22 = Number(data.rates['22K']) || Math.round(r24 * 22 / 24);
+          const r20 = Number(data.rates['20K']) || Math.round(r24 * 20 / 24);
+          const r18 = Number(data.rates['18K']) || Math.round(r24 * 18 / 24);
+          const r14 = Number(data.rates['14K']) || Math.round(r24 * 14 / 24);
+          const cityName = data.city || 'Chennai';
+
+          setGoodReturnsRates(prev => ({
+            ...prev,
+            city: cityName,
+            rates: {
+              '24K': r24,
+              '22K': r22,
+              '20K': r20,
+              '18K': r18,
+              '14K': r14,
+            },
+            isCustomOverride: true,
+            lastUpdated: data.updatedAt ? new Date(data.updatedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : 'Admin Synchronized'
+          }));
+        }
+      })
+      .catch(err => console.warn('Could not pull initial cloud rates:', err));
+  }, []);
+
   const unreadEnquiriesCount = enquiries.filter(e => e.status === 'SUBMITTED').length;
 
   const updateEnquiryStatus = async (id: string, status: any, notes?: string) => {
@@ -605,6 +635,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       } catch {}
       return newSettings;
     });
+
+    // Sync to cloud backend so Customer App immediately displays this admin rate
+    backendApi.updateRates({
+      city: targetCity,
+      rates: {
+        '24K': updated.rates['24K'],
+        '22K': updated.rates['22K'],
+        '20K': updated.rates['20K'] || Math.round(updated.rates['24K'] * 20 / 24),
+        '18K': updated.rates['18K'] || Math.round(updated.rates['24K'] * 18 / 24),
+        '14K': updated.rates['14K'] || Math.round(updated.rates['24K'] * 14 / 24),
+        'silver': 96
+      }
+    }).catch(err => console.warn('Failed to sync rates to cloud:', err));
   };
 
   const changeGoodReturnsCity = (newCity: string) => {

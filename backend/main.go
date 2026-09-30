@@ -818,6 +818,22 @@ func (s *AppServer) handleRates(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
+		if s.useDB && s.db != nil {
+			var city string
+			var ratesJSON string
+			var updatedAt time.Time
+			err := s.db.QueryRow("SELECT city, rates, updated_at FROM gold_rates ORDER BY updated_at DESC LIMIT 1").Scan(&city, &ratesJSON, &updatedAt)
+			if err == nil {
+				var ratesMap map[string]float64
+				if json.Unmarshal([]byte(ratesJSON), &ratesMap) == nil {
+					s.rates = LiveRates{
+						City:      city,
+						Rates:     ratesMap,
+						UpdatedAt: updatedAt.Format(time.RFC3339),
+					}
+				}
+			}
+		}
 		jsonResponse(w, http.StatusOK, s.rates)
 	case http.MethodPost:
 		var rReq LiveRates
@@ -825,8 +841,21 @@ func (s *AppServer) handleRates(w http.ResponseWriter, r *http.Request) {
 			jsonResponse(w, http.StatusBadRequest, map[string]string{"error": "Invalid body"})
 			return
 		}
+		if rReq.City == "" {
+			rReq.City = "Chennai"
+		}
 		s.rates = rReq
 		s.rates.UpdatedAt = time.Now().Format(time.RFC3339)
+		if s.useDB && s.db != nil {
+			ratesBytes, _ := json.Marshal(s.rates.Rates)
+			_, _ = s.db.Exec(`CREATE TABLE IF NOT EXISTS gold_rates (
+				id SERIAL PRIMARY KEY,
+				city VARCHAR(100) NOT NULL,
+				rates JSONB NOT NULL,
+				updated_at TIMESTAMPTZ DEFAULT NOW()
+			)`)
+			_, _ = s.db.Exec(`INSERT INTO gold_rates (city, rates, updated_at) VALUES ($1, $2, NOW())`, s.rates.City, string(ratesBytes))
+		}
 		jsonResponse(w, http.StatusOK, s.rates)
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)

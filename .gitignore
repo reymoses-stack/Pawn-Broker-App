@@ -15,12 +15,13 @@ build/
 .env.*.local
 !.env.example
 
-# Go binaries
+# Go binaries & APKs
 backend/server
 *.exe
 *.dll
 *.so
 *.dylib
+*.apk
 
 # Android build & cache
 .gradle/

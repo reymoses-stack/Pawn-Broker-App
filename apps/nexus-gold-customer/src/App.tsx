@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Customer, Mortgage, Payment, PawnEnquiry } from './types';
+import { Customer, Mortgage, Payment, PawnEnquiry, GoldRate } from './types';
 import { MOCK_BRANCH, MOCK_MORTGAGES, MOCK_PAYMENTS, MOCK_GOLD_RATES, MOCK_ENQUIRIES } from './data/mockData';
 import { Language, translations } from './i18n/translations';
 import { LoginView } from './components/LoginView';
@@ -93,12 +93,52 @@ export function App() {
   const [customerPayments, setCustomerPayments] = useState<Payment[]>([]);
   const [isLoadingLive, setIsLoadingLive] = useState<boolean>(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<string>('');
+  const [liveRates, setLiveRates] = useState<GoldRate>(MOCK_GOLD_RATES);
+
+  const fetchLiveRates = useCallback(async () => {
+    try {
+      const data = await backendApi.getRates();
+      if (data && data.rates) {
+        setLiveRates({
+          purity24K: Number(data.rates['24K']) || 7920,
+          purity22K: Number(data.rates['22K']) || 7260,
+          purity18K: Number(data.rates['18K']) || 5940,
+          silverPerGram: Number(data.rates['silver']) || 96,
+          lastUpdated: data.updatedAt
+            ? `Admin Applied Rate (${data.city || 'Branch'}) • ${new Date(data.updatedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`
+            : 'Admin Applied Rate • Live'
+        });
+      }
+    } catch (err) {
+      console.warn('Could not fetch admin live rates, using fallback:', err);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchLiveRates();
+    const rateInterval = setInterval(() => {
+      fetchLiveRates();
+    }, 8000);
+    return () => clearInterval(rateInterval);
+  }, [fetchLiveRates]);
 
   const fetchLivePassbook = useCallback(async () => {
     if (!currentCustomer) return;
     setIsLoadingLive(true);
     try {
       const data = await backendApi.getPassbook(currentCustomer.mobile || currentCustomer.id);
+      if (data && data.rates && data.rates.rates) {
+        setLiveRates({
+          purity24K: Number(data.rates.rates['24K']) || 7920,
+          purity22K: Number(data.rates.rates['22K']) || 7260,
+          purity18K: Number(data.rates.rates['18K']) || 5940,
+          silverPerGram: Number(data.rates.rates['silver']) || 96,
+          lastUpdated: data.rates.updatedAt
+            ? `Admin Applied Rate (${data.rates.city || 'Branch'}) • ${new Date(data.rates.updatedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`
+            : 'Admin Applied Rate • Live'
+        });
+      }
+
       if (data && data.mortgages && Array.isArray(data.mortgages) && data.mortgages.length > 0) {
         const mappedMortgages: Mortgage[] = data.mortgages.map((m: any) => ({
           id: m.id || m.mortgageNumber,
@@ -185,6 +225,66 @@ export function App() {
       />
     );
   }
+
+  const renderGoldRatesCard = () => (
+    <div className="bg-white rounded-3xl p-5 sm:p-6 border border-amber-200/90 shadow-sm space-y-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+        <div>
+          <div className="flex items-center gap-2">
+            <h3 className="font-black text-sm text-slate-900">
+              {language === 'ta' ? 'இன்றைய தங்க விலை நிலவரம்' : 'Today\'s Benchmark Gold Rates'}
+            </h3>
+            <span className="inline-flex items-center gap-1.5 text-[10px] font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-full border border-emerald-200">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse"></span>
+              {language === 'ta' ? 'நிர்வாக விலை (Admin Rate)' : 'Admin Applied Rate'}
+            </span>
+          </div>
+          <p className="text-[11px] text-slate-500 font-medium mt-0.5">
+            {liveRates.lastUpdated || 'Official pawn rate benchmark for loans & advances'}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => fetchLiveRates()}
+          className="self-start sm:self-auto flex items-center gap-1.5 px-3 py-1 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 text-[11px] font-bold transition active:scale-95 cursor-pointer"
+        >
+          <RefreshCw className="w-3 h-3 text-amber-700" />
+          <span>{language === 'ta' ? 'விலை புதுப்பி' : 'Refresh Rates'}</span>
+        </button>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="p-3.5 rounded-2xl bg-amber-50/70 border border-amber-200/80 text-center hover:bg-amber-50 transition">
+          <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">22K 916 Hallmark</div>
+          <div className="text-lg sm:text-xl font-black font-mono text-amber-950 mt-1">
+            ₹{liveRates.purity22K ? liveRates.purity22K.toLocaleString('en-IN') : '7,260'}
+          </div>
+          <div className="text-[10px] text-amber-800 font-medium">per gram</div>
+        </div>
+        <div className="p-3.5 rounded-2xl bg-amber-50/70 border border-amber-200/80 text-center hover:bg-amber-50 transition">
+          <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">24K 999 Fine</div>
+          <div className="text-lg sm:text-xl font-black font-mono text-amber-950 mt-1">
+            ₹{liveRates.purity24K ? liveRates.purity24K.toLocaleString('en-IN') : '7,920'}
+          </div>
+          <div className="text-[10px] text-amber-800 font-medium">per gram</div>
+        </div>
+        <div className="p-3.5 rounded-2xl bg-amber-50/70 border border-amber-200/80 text-center hover:bg-amber-50 transition">
+          <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">18K 750 Gold</div>
+          <div className="text-lg sm:text-xl font-black font-mono text-amber-950 mt-1">
+            ₹{liveRates.purity18K ? liveRates.purity18K.toLocaleString('en-IN') : '5,940'}
+          </div>
+          <div className="text-[10px] text-amber-800 font-medium">per gram</div>
+        </div>
+        <div className="p-3.5 rounded-2xl bg-amber-50/70 border border-amber-200/80 text-center hover:bg-amber-50 transition">
+          <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Silver (வெள்ளி)</div>
+          <div className="text-lg sm:text-xl font-black font-mono text-amber-950 mt-1">
+            ₹{liveRates.silverPerGram ? liveRates.silverPerGram.toLocaleString('en-IN') : '96'}
+          </div>
+          <div className="text-[10px] text-amber-800 font-medium">per gram</div>
+        </div>
+      </div>
+    </div>
+  );
 
   const customerEnquiries = enquiries.filter(e => e.customerMobile === currentCustomer.mobile || currentCustomer.isNewCustomer);
 
@@ -274,44 +374,7 @@ export function App() {
                 </div>
 
                 {/* Live Benchmark Gold Rates */}
-                <div className="bg-white rounded-3xl p-6 border border-amber-200/80 shadow-sm space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h3 className="font-black text-sm text-slate-900">
-                        {language === 'ta' ? 'இன்றைய தங்க விலை நிலவரம்' : 'Today\'s Benchmark Gold Rates'}
-                      </h3>
-                      <p className="text-[11px] text-slate-500 font-medium">
-                        Standard pawn rate benchmark for loans & advances
-                      </p>
-                    </div>
-                    <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100 px-2.5 py-1 rounded-full border border-emerald-200">
-                      ● Active Market Rates
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                    <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-center">
-                      <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">22K 916 Hallmark</div>
-                      <div className="text-lg sm:text-xl font-black font-mono text-amber-950 mt-1">₹{MOCK_GOLD_RATES.purity22K}</div>
-                      <div className="text-[10px] text-amber-800 font-medium">per gram</div>
-                    </div>
-                    <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-center">
-                      <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">24K 999 Fine</div>
-                      <div className="text-lg sm:text-xl font-black font-mono text-amber-950 mt-1">₹{MOCK_GOLD_RATES.purity24K}</div>
-                      <div className="text-[10px] text-amber-800 font-medium">per gram</div>
-                    </div>
-                    <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-center">
-                      <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">18K 750 Gold</div>
-                      <div className="text-lg sm:text-xl font-black font-mono text-amber-950 mt-1">₹{MOCK_GOLD_RATES.purity18K}</div>
-                      <div className="text-[10px] text-amber-800 font-medium">per gram</div>
-                    </div>
-                    <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-center">
-                      <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Silver (வெள்ளி)</div>
-                      <div className="text-lg sm:text-xl font-black font-mono text-amber-950 mt-1">₹{MOCK_GOLD_RATES.silverPerGram}</div>
-                      <div className="text-[10px] text-amber-800 font-medium">per gram</div>
-                    </div>
-                  </div>
-                </div>
+                {renderGoldRatesCard()}
 
                 {/* Recent Enquiries if any */}
                 {customerEnquiries.length > 0 && (
@@ -386,6 +449,9 @@ export function App() {
                   branch={MOCK_BRANCH}
                   language={language}
                 />
+
+                {/* Live Benchmark Gold Rates Card for Existing Customers */}
+                {renderGoldRatesCard()}
 
                 {/* Quick Shortcuts */}
                 <div className="grid grid-cols-2 gap-3">
@@ -470,7 +536,7 @@ export function App() {
         {/* Tab 3: Gold Valuation Calculator */}
         {activeTab === 'calculator' && (
           <GoldLoanCalculator
-            rates={MOCK_GOLD_RATES}
+            rates={liveRates}
             branch={MOCK_BRANCH}
             language={language}
             onProceedToEnquiry={handleCarryOverToEnquiry}
@@ -482,7 +548,7 @@ export function App() {
           <PawnEnquiryForm
             customer={currentCustomer}
             branch={MOCK_BRANCH}
-            rates={MOCK_GOLD_RATES}
+            rates={liveRates}
             language={language}
             initialValues={calculatorCarryOver}
             onEnquirySubmitted={handleEnquirySubmitted}
