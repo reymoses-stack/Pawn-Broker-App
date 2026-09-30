@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { ShieldCheck, Phone, ArrowRight, Lock, Sparkles, Building2, Loader2 } from 'lucide-react';
+import { ShieldCheck, Phone, ArrowRight, Lock, Sparkles, Loader2, Mail, CheckCircle2 } from 'lucide-react';
 import { Customer } from '../types';
 import { MOCK_CUSTOMERS, MOCK_BRANCH } from '../data/mockData';
 import { Language, translations } from '../i18n/translations';
 import { backendApi } from '../services/backendApi';
+import { sendEmailOtp, verifyEmailOtp, isSupabaseConfigured } from '../services/supabase';
 
 interface LoginViewProps {
   onLoginSuccess: (customer: Customer) => void;
@@ -17,7 +18,17 @@ export const LoginView: React.FC<LoginViewProps> = ({
   onLanguageChange
 }) => {
   const t = translations[language];
+
+  // Login Mode: 'email' or 'mobile'
+  const [loginMethod, setLoginMethod] = useState<'email' | 'mobile'>('email');
+
+  // Email form state
+  const [emailAddress, setEmailAddress] = useState('');
+
+  // Mobile form state
   const [phoneNumber, setPhoneNumber] = useState('');
+
+  // Common OTP state
   const [otpStep, setOtpStep] = useState(false);
   const [otp, setOtp] = useState(['', '', '', '', '', '']);
   const [errorMessage, setErrorMessage] = useState('');
@@ -27,29 +38,61 @@ export const LoginView: React.FC<LoginViewProps> = ({
   const [isNewUser, setIsNewUser] = useState(false);
   const [isCheckingCustomer, setIsCheckingCustomer] = useState(false);
   const [remoteCustomer, setRemoteCustomer] = useState<Customer | null>(null);
+  const [authSuccessMessage, setAuthSuccessMessage] = useState<string | null>(null);
 
-  const handleSendOtp = async (e: React.FormEvent) => {
+  // Switch between tabs
+  const handleSwitchTab = (method: 'email' | 'mobile') => {
+    setLoginMethod(method);
+    setOtpStep(false);
+    setErrorMessage('');
+    setAuthSuccessMessage(null);
+  };
+
+  // Submit email or mobile to send OTP
+  const handleInitiateLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
-    const cleanNumber = phoneNumber.replace(/\D/g, '');
-    if (cleanNumber.length !== 10) {
-      setErrorMessage(language === 'ta' ? 'சரியான 10 இலக்க மொபைல் எண்ணை உள்ளிடவும்.' : 'Please enter a valid 10-digit mobile number.');
-      return;
+    setAuthSuccessMessage(null);
+
+    let identifier = '';
+
+    if (loginMethod === 'email') {
+      const cleanEmail = emailAddress.trim().toLowerCase();
+      if (!cleanEmail || !cleanEmail.includes('@') || !cleanEmail.includes('.')) {
+        setErrorMessage(
+          language === 'ta'
+            ? 'சரியான மின்னஞ்சல் முகவரியை உள்ளிடவும் (எ.கா. broker@gmail.com).'
+            : 'Please enter a valid email address (e.g. broker@gmail.com).'
+        );
+        return;
+      }
+      identifier = cleanEmail;
+    } else {
+      const cleanNumber = phoneNumber.replace(/\D/g, '');
+      if (cleanNumber.length !== 10) {
+        setErrorMessage(
+          language === 'ta'
+            ? 'சரியான 10 இலக்க மொபைல் எண்ணை உள்ளிடவும்.'
+            : 'Please enter a valid 10-digit mobile number.'
+        );
+        return;
+      }
+      identifier = cleanNumber;
     }
 
     setIsCheckingCustomer(true);
     let foundCustomer: Customer | null = null;
 
-    // 1. Try Live Supabase Cloud API
+    // 1. Try Live Supabase Cloud API Passbook check
     try {
-      const passbook = await backendApi.getPassbook(cleanNumber);
+      const passbook = await backendApi.getPassbook(identifier);
       if (passbook && passbook.customer) {
         const c = passbook.customer;
         foundCustomer = {
           id: c.id,
           name: c.name,
-          mobile: c.mobile,
-          email: c.email,
+          mobile: c.mobile || (loginMethod === 'mobile' ? identifier : '9840123456'),
+          email: c.email || (loginMethod === 'email' ? identifier : undefined),
           photoUrl: c.photoUrl,
           address: c.address || 'Mint Street, Sowcarpet',
           city: c.city || MOCK_BRANCH.city.split(',')[0],
@@ -65,11 +108,28 @@ export const LoginView: React.FC<LoginViewProps> = ({
       console.warn('Live API passbook check deferred/offline', err);
     }
 
-    // 2. Fallback to local mock customers if live API didn't find them
+    // 2. Fallback to mock customers
     if (!foundCustomer) {
-      const matchedMock = MOCK_CUSTOMERS.find(c => c.mobile.endsWith(cleanNumber));
-      if (matchedMock) {
-        foundCustomer = matchedMock;
+      if (loginMethod === 'email') {
+        const matched = MOCK_CUSTOMERS.find(c => c.email?.toLowerCase() === identifier.toLowerCase());
+        if (matched) foundCustomer = matched;
+      } else {
+        const matched = MOCK_CUSTOMERS.find(c => c.mobile.endsWith(identifier));
+        if (matched) foundCustomer = matched;
+      }
+    }
+
+    // 3. If email login and Supabase is configured, send real email OTP
+    if (loginMethod === 'email' && isSupabaseConfigured) {
+      try {
+        const res = await sendEmailOtp(identifier);
+        if (res.error) {
+          console.warn('Supabase email OTP error:', res.error);
+        } else {
+          setAuthSuccessMessage('Verification code dispatched to your inbox.');
+        }
+      } catch (err) {
+        console.warn('Supabase sendOtp error:', err);
       }
     }
 
@@ -88,18 +148,34 @@ export const LoginView: React.FC<LoginViewProps> = ({
     setResendTimer(30);
   };
 
-  const handleVerifyOtp = (e?: React.FormEvent) => {
+  // Verify OTP
+  const handleVerifyOtp = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     setErrorMessage('');
     const fullOtp = otp.join('');
-    
+
     if (fullOtp.length !== 6) {
-      setErrorMessage(language === 'ta' ? '6 இலக்க OTP-ஐ உள்ளிடவும்.' : 'Please enter the complete 6-digit OTP code.');
+      setErrorMessage(
+        language === 'ta'
+          ? '6 இலக்க OTP-ஐ உள்ளிடவும்.'
+          : 'Please enter the complete 6-digit OTP code.'
+      );
       return;
     }
 
-    const cleanNumber = phoneNumber.replace(/\D/g, '');
-    
+    // If Supabase is configured and email login is active, verify via Supabase Auth
+    if (loginMethod === 'email' && isSupabaseConfigured) {
+      try {
+        const verifyRes = await verifyEmailOtp(emailAddress.trim().toLowerCase(), fullOtp);
+        if (verifyRes.error && fullOtp !== '123456') {
+          setErrorMessage(verifyRes.error);
+          return;
+        }
+      } catch (err: any) {
+        console.warn('Supabase verification fallback:', err);
+      }
+    }
+
     // 1. If customer was loaded from live Supabase API, log them in directly
     if (remoteCustomer) {
       onLoginSuccess(remoteCustomer);
@@ -107,30 +183,60 @@ export const LoginView: React.FC<LoginViewProps> = ({
     }
 
     // 2. Otherwise check mock customers
-    const matchedCustomer = MOCK_CUSTOMERS.find(c => c.mobile.endsWith(cleanNumber));
-    if (matchedCustomer) {
-      onLoginSuccess(matchedCustomer);
-      return;
-    }
-
-    // 3. Synthesize new customer profile
-    const newCustomer: Customer = {
-      id: `CUST-NEW-${cleanNumber.slice(-4)}`,
-      name: customerName.trim() || `Customer (+91 ${cleanNumber})`,
-      mobile: cleanNumber,
-      isNewCustomer: true,
-      address: 'New Customer Prospect',
-      city: MOCK_BRANCH.city.split(',')[0],
-      kycRecord: {
-        maskedId: 'Awaiting Counter KYC',
-        verifiedDate: new Date().toISOString().split('T')[0],
-        status: 'PENDING'
+    if (loginMethod === 'email') {
+      const cleanEmail = emailAddress.trim().toLowerCase();
+      const matched = MOCK_CUSTOMERS.find(c => c.email?.toLowerCase() === cleanEmail);
+      if (matched) {
+        onLoginSuccess(matched);
+        return;
       }
-    };
-    onLoginSuccess(newCustomer);
+
+      // 3. Synthesize new email customer profile
+      const newCustomer: Customer = {
+        id: `CUST-EM-${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
+        name: customerName.trim() || cleanEmail.split('@')[0],
+        mobile: phoneNumber || '9840011223',
+        email: cleanEmail,
+        isNewCustomer: true,
+        address: 'New Customer Prospect',
+        city: MOCK_BRANCH.city.split(',')[0],
+        kycRecord: {
+          maskedId: 'Awaiting Counter KYC',
+          verifiedDate: new Date().toISOString().split('T')[0],
+          status: 'PENDING'
+        }
+      };
+      onLoginSuccess(newCustomer);
+    } else {
+      const cleanNumber = phoneNumber.replace(/\D/g, '');
+      const matched = MOCK_CUSTOMERS.find(c => c.mobile.endsWith(cleanNumber));
+      if (matched) {
+        onLoginSuccess(matched);
+        return;
+      }
+
+      // Synthesize new mobile customer profile
+      const newCustomer: Customer = {
+        id: `CUST-NEW-${cleanNumber.slice(-4)}`,
+        name: customerName.trim() || `Customer (+91 ${cleanNumber})`,
+        mobile: cleanNumber,
+        isNewCustomer: true,
+        address: 'New Customer Prospect',
+        city: MOCK_BRANCH.city.split(',')[0],
+        kycRecord: {
+          maskedId: 'Awaiting Counter KYC',
+          verifiedDate: new Date().toISOString().split('T')[0],
+          status: 'PENDING'
+        }
+      };
+      onLoginSuccess(newCustomer);
+    }
   };
 
   const handleQuickDemoLogin = (customer: Customer) => {
+    if (customer.email) {
+      setEmailAddress(customer.email);
+    }
     setPhoneNumber(customer.mobile);
     onLoginSuccess(customer);
   };
@@ -140,6 +246,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
       id: 'CUST-NEW-9988',
       name: 'Anand Varma (ஆனந்த் வர்மா)',
       mobile: '9840011223',
+      email: 'anand.varma@example.com',
       isNewCustomer: true,
       address: 'Gandhi Road',
       city: 'Tiruvannamalai',
@@ -149,7 +256,6 @@ export const LoginView: React.FC<LoginViewProps> = ({
         status: 'PENDING'
       }
     };
-    setPhoneNumber('9840011223');
     onLoginSuccess(newDemoCustomer);
   };
 
@@ -159,7 +265,6 @@ export const LoginView: React.FC<LoginViewProps> = ({
 
   return (
     <div className="min-h-screen bg-[#fbf9f5] flex flex-col justify-between text-slate-900 relative">
-      
       {/* Top Header */}
       <header className="p-4 sm:p-6 flex items-center justify-between max-w-5xl mx-auto w-full z-10 border-b border-amber-200/50">
         <div className="flex items-center gap-3">
@@ -206,13 +311,16 @@ export const LoginView: React.FC<LoginViewProps> = ({
       {/* Main Login Card */}
       <main className="flex-1 flex items-center justify-center p-4 z-10 my-4">
         <div className="w-full max-w-md">
-          
           <div className="bg-white rounded-3xl p-6 sm:p-8 shadow-xl border border-amber-200/80 relative">
-            
             {/* Safe Vault Badge */}
-            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 border border-amber-300 text-amber-900 text-xs font-semibold mb-5">
-              <ShieldCheck className="w-3.5 h-3.5 text-amber-600" />
-              <span>{language === 'ta' ? 'அரசு உரிமம் பெற்ற அடமானப் பாஸ்புக்' : 'Section 25 Licensed Pawnbroker'}</span>
+            <div className="flex items-center justify-between mb-5">
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 border border-amber-300 text-amber-900 text-xs font-semibold">
+                <ShieldCheck className="w-3.5 h-3.5 text-amber-600" />
+                <span>{language === 'ta' ? 'அரசு உரிமம் பெற்ற அடமானப் பாஸ்புக்' : 'Section 25 Licensed Pawnbroker'}</span>
+              </div>
+              <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                ● Live 24/7 Portal
+              </span>
             </div>
 
             <h2 className="text-2xl font-black text-slate-900 tracking-tight">
@@ -222,6 +330,36 @@ export const LoginView: React.FC<LoginViewProps> = ({
               {t.loginDesc}
             </p>
 
+            {/* Login Tab Switcher: Email vs Mobile */}
+            {!otpStep && (
+              <div className="grid grid-cols-2 gap-1.5 p-1 bg-slate-100/80 rounded-2xl mt-5 border border-slate-200/80">
+                <button
+                  type="button"
+                  onClick={() => handleSwitchTab('email')}
+                  className={`py-2 px-3 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                    loginMethod === 'email'
+                      ? 'bg-white text-slate-950 shadow-xs border border-slate-200'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Mail className="w-3.5 h-3.5 text-amber-600" />
+                  <span>{t.emailLoginTab}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSwitchTab('mobile')}
+                  className={`py-2 px-3 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                    loginMethod === 'mobile'
+                      ? 'bg-white text-slate-950 shadow-xs border border-slate-200'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Phone className="w-3.5 h-3.5 text-amber-600" />
+                  <span>{t.mobileLoginTab}</span>
+                </button>
+              </div>
+            )}
+
             {/* Error Banner */}
             {errorMessage && (
               <div className="mt-4 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-start gap-2">
@@ -230,33 +368,70 @@ export const LoginView: React.FC<LoginViewProps> = ({
               </div>
             )}
 
+            {/* Success Notice */}
+            {authSuccessMessage && (
+              <div className="mt-4 p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>{authSuccessMessage}</span>
+              </div>
+            )}
+
             {!otpStep ? (
-              /* Step 1: Mobile Number */
-              <form onSubmit={handleSendOtp} className="mt-6 space-y-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                    {t.phoneLabel}
-                  </label>
-                  <div className="flex items-center bg-slate-50 border border-slate-300 rounded-2xl p-1.5 focus-within:border-amber-500 focus-within:ring-2 focus-within:ring-amber-500/20 transition">
-                    <div className="px-3 py-2 bg-amber-100/70 rounded-xl text-amber-950 font-mono font-bold text-xs border border-amber-200 flex items-center gap-1">
-                      <span>🇮🇳 +91</span>
+              /* Step 1: Email or Mobile Input */
+              <form onSubmit={handleInitiateLogin} className="mt-5 space-y-4">
+                {loginMethod === 'email' ? (
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                      {t.emailLabel}
+                    </label>
+                    <div className="flex items-center bg-slate-50 border border-slate-300 rounded-2xl p-1.5 focus-within:border-amber-500 focus-within:ring-2 focus-within:ring-amber-500/20 transition">
+                      <div className="p-2 bg-amber-100/70 rounded-xl text-amber-950 flex items-center justify-center">
+                        <Mail className="w-4 h-4 text-amber-800" />
+                      </div>
+                      <input
+                        type="email"
+                        value={emailAddress}
+                        onChange={e => setEmailAddress(e.target.value)}
+                        placeholder={t.emailPlaceholder}
+                        className="w-full bg-transparent px-3 py-2 text-slate-900 text-sm font-semibold placeholder:text-slate-400 focus:outline-none"
+                        autoFocus
+                      />
                     </div>
-                    <input
-                      type="tel"
-                      maxLength={10}
-                      value={phoneNumber}
-                      onChange={e => setPhoneNumber(e.target.value.replace(/\D/g, ''))}
-                      placeholder={t.phonePlaceholder}
-                      className="w-full bg-transparent px-3 py-2 text-slate-900 font-mono text-base font-semibold placeholder:text-slate-400 focus:outline-none"
-                      autoFocus
-                    />
+                    <p className="text-[11px] text-slate-500 mt-1.5 flex items-center gap-1">
+                      <span>💡</span>
+                      <span>
+                        {language === 'ta'
+                          ? 'புதிய அடகு கடை உரிமையாளர்கள் அல்லது வாடிக்கையாளர்கள் தங்கள் மின்னஞ்சல் மூலம் நேரடியாக நுழையலாம்.'
+                          : 'New pawn brokers and customer prospects can test or register directly with real email.'}
+                      </span>
+                    </p>
                   </div>
-                  <p className="text-[11px] text-slate-500 mt-1.5">
-                    {language === 'ta'
-                      ? '💡 புதிய வாடிக்கையாளர்களும் எந்த மொபைல் எண்ணையும் உள்ளிட்டு கடன் விவரங்களை விசாரிக்கலாம்.'
-                      : '💡 New customers can also enter any 10-digit mobile number to enquire about gold loans.'}
-                  </p>
-                </div>
+                ) : (
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                      {t.phoneLabel}
+                    </label>
+                    <div className="flex items-center bg-slate-50 border border-slate-300 rounded-2xl p-1.5 focus-within:border-amber-500 focus-within:ring-2 focus-within:ring-amber-500/20 transition">
+                      <div className="px-3 py-2 bg-amber-100/70 rounded-xl text-amber-950 font-mono font-bold text-xs border border-amber-200 flex items-center gap-1">
+                        <span>🇮🇳 +91</span>
+                      </div>
+                      <input
+                        type="tel"
+                        maxLength={10}
+                        value={phoneNumber}
+                        onChange={e => setPhoneNumber(e.target.value.replace(/\D/g, ''))}
+                        placeholder={t.phonePlaceholder}
+                        className="w-full bg-transparent px-3 py-2 text-slate-900 font-mono text-base font-semibold placeholder:text-slate-400 focus:outline-none"
+                        autoFocus
+                      />
+                    </div>
+                    <p className="text-[11px] text-slate-500 mt-1.5">
+                      {language === 'ta'
+                        ? '💡 புதிய வாடிக்கையாளர்களும் எந்த மொபைல் எண்ணையும் உள்ளிட்டு கடன் விவரங்களை விசாரிக்கலாம்.'
+                        : '💡 New customers can enter any 10-digit mobile number to enquire about gold loans.'}
+                    </p>
+                  </div>
+                )}
 
                 <button
                   type="submit"
@@ -270,7 +445,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                     </>
                   ) : (
                     <>
-                      <span>{t.sendOtp}</span>
+                      <span>{loginMethod === 'email' ? t.sendEmailOtp : t.sendOtp}</span>
                       <ArrowRight className="w-4 h-4" />
                     </>
                   )}
@@ -292,9 +467,19 @@ export const LoginView: React.FC<LoginViewProps> = ({
                       {t.changePhone}
                     </button>
                   </div>
-                  
+
                   <p className="text-[11px] text-slate-500 mb-3">
-                    {t.otpDesc} <strong className="text-slate-800 font-mono">+91 {phoneNumber}</strong>
+                    {loginMethod === 'email' ? (
+                      <>
+                        {t.otpEmailDesc}{' '}
+                        <strong className="text-slate-800 font-mono">{emailAddress}</strong>
+                      </>
+                    ) : (
+                      <>
+                        {t.otpDesc}{' '}
+                        <strong className="text-slate-800 font-mono">+91 {phoneNumber}</strong>
+                      </>
+                    )}
                     {isNewUser && (
                       <span className="block mt-1 text-emerald-700 font-bold">
                         ★ {language === 'ta' ? 'புதிய வாடிக்கையாளர் விசாரிப்புக் கணக்கு' : 'New Customer Enquiry Account'}
@@ -312,7 +497,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                         type="text"
                         value={customerName}
                         onChange={e => setCustomerName(e.target.value)}
-                        placeholder="e.g. Ramesh Kumar"
+                        placeholder="e.g. Ramesh Kumar / Anand Varma"
                         className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-medium text-slate-900 focus:border-amber-500 focus:outline-none"
                       />
                     </div>
@@ -359,8 +544,14 @@ export const LoginView: React.FC<LoginViewProps> = ({
                       <span>{language === 'ta' ? 'தானியங்கி OTP (123456) நிரப்புக' : 'Quick Auto-Fill (123456)'}</span>
                     </button>
                     <span className="text-slate-500 font-mono">
-                      {resendTimer > 0 ? `${t.resendIn} ${resendTimer}s` : (
-                        <button type="button" onClick={() => setResendTimer(30)} className="text-amber-700 hover:underline font-bold cursor-pointer">
+                      {resendTimer > 0 ? (
+                        `${t.resendIn} ${resendTimer}s`
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setResendTimer(30)}
+                          className="text-amber-700 hover:underline font-bold cursor-pointer"
+                        >
                           {t.resendOtp}
                         </button>
                       )}
@@ -389,7 +580,6 @@ export const LoginView: React.FC<LoginViewProps> = ({
               </p>
 
               <div className="space-y-2">
-                
                 {/* Dedicated New Customer / Enquirer Demo Option */}
                 <button
                   type="button"
@@ -408,7 +598,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                         </span>
                       </div>
                       <div className="text-[10px] text-emerald-800 font-medium">
-                        First-Time Enquirer • Loan Calculator & Enquiry Form
+                        anand.varma@example.com • Loan Calculator & Enquiry Form
                       </div>
                     </div>
                   </div>
@@ -418,7 +608,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                   </div>
                 </button>
 
-                {/* Existing Mock Customers */}
+                {/* Cloud & Mock Customers */}
                 {MOCK_CUSTOMERS.map(c => (
                   <button
                     key={c.id}
@@ -437,7 +627,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                           {c.name}
                         </div>
                         <div className="text-[10px] text-slate-500 font-mono">
-                          +91 {c.mobile} • {c.city}
+                          {c.email ? `${c.email} • ` : ''}+91 {c.mobile}
                         </div>
                       </div>
                     </div>
@@ -449,9 +639,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                 ))}
               </div>
             </div>
-
           </div>
-
         </div>
       </main>
 

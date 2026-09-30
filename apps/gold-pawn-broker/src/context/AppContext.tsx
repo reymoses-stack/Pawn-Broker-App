@@ -565,7 +565,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           '22K': updated.rates['22K'],
           '20K': updated.rates['20K'],
           '18K': updated.rates['18K'],
-          '14K': updated.rates['14K'] || prev.goldRates?.['14K'] || 4620
+          '14K': updated.rates['14K'] || prev.goldRates?.['14K'] || 8908
         }
       };
       try {
@@ -573,6 +573,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       } catch {}
       return newSettings;
     });
+
+    backendApi.updateRates({
+      city: targetCity,
+      rates: {
+        '24K': updated.rates['24K'],
+        '22K': updated.rates['22K'],
+        '20K': updated.rates['20K'] || Math.round(updated.rates['24K'] * 20 / 24),
+        '18K': updated.rates['18K'] || Math.round(updated.rates['24K'] * 18 / 24),
+        '14K': updated.rates['14K'] || Math.round(updated.rates['24K'] * 14 / 24),
+        'silver': 96
+      }
+    }).catch(err => console.warn('Failed to sync refreshed rates to cloud:', err));
   };
 
   const syncLiveMarketRates = async (cityToUse?: string): Promise<GoodReturnsRateData> => {
@@ -591,7 +603,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           '22K': liveData.rates['22K'],
           '20K': liveData.rates['20K'],
           '18K': liveData.rates['18K'],
-          '14K': liveData.rates['14K'] || prev.goldRates?.['14K'] || 4620
+          '14K': liveData.rates['14K'] || prev.goldRates?.['14K'] || 8908
         }
       };
       try {
@@ -599,6 +611,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       } catch {}
       return newSettings;
     });
+
+    backendApi.updateRates({
+      city: targetCity,
+      rates: {
+        '24K': liveData.rates['24K'],
+        '22K': liveData.rates['22K'],
+        '20K': liveData.rates['20K'] || Math.round(liveData.rates['24K'] * 20 / 24),
+        '18K': liveData.rates['18K'] || Math.round(liveData.rates['24K'] * 18 / 24),
+        '14K': liveData.rates['14K'] || Math.round(liveData.rates['24K'] * 14 / 24),
+        'silver': 96
+      }
+    }).catch(err => console.warn('Failed to sync live market rates to cloud:', err));
+
     return liveData;
   };
 
@@ -1619,6 +1644,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       saveGoodReturnsOverride(city, newSettings.goldRates);
       const updated = getGoodReturnsRatesForCity(city);
       setGoodReturnsRates(updated);
+
+      backendApi.updateRates({
+        city,
+        rates: {
+          '24K': updated.rates['24K'],
+          '22K': updated.rates['22K'],
+          '20K': updated.rates['20K'] || Math.round(updated.rates['24K'] * 20 / 24),
+          '18K': updated.rates['18K'] || Math.round(updated.rates['24K'] * 18 / 24),
+          '14K': updated.rates['14K'] || Math.round(updated.rates['24K'] * 14 / 24),
+          'silver': 96
+        }
+      }).catch(err => console.warn('Failed to sync settings rates to cloud:', err));
     }
     logAudit('SETTINGS_CHANGE', 'SETTINGS', 'BUSINESS_RULES', `Updated business configuration and gold rates`);
   };

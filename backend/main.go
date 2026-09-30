@@ -48,6 +48,7 @@ type Customer struct {
 	ID                            string                 `json:"id"`
 	Name                          string                 `json:"name"`
 	Mobile                        string                 `json:"mobile"`
+	Email                         string                 `json:"email,omitempty"`
 	SecondaryMobile               string                 `json:"secondaryMobile,omitempty"`
 	AadhaarNumber                 string                 `json:"aadhaarNumber,omitempty"`
 	DateOfBirth                   string                 `json:"dateOfBirth,omitempty"`
@@ -183,17 +184,32 @@ func NewAppServer(db *sql.DB, dbErr string) *AppServer {
 		rates: LiveRates{
 			City: "Chennai",
 			Rates: map[string]float64{
-				"24K": 7920.0,
-				"22K": 7260.0,
-				"20K": 6600.0,
-				"18K": 5940.0,
-				"14K": 4620.0,
+				"24K":    15270.0,
+				"22K":    14000.0,
+				"20K":    12725.0,
+				"18K":    11453.0,
+				"14K":    8908.0,
+				"silver": 96.0,
 			},
 			UpdatedAt: time.Now().Format(time.RFC3339),
 		},
 	}
 	srv.initSeedData()
+	if srv.useDB && srv.db != nil {
+		srv.initDatabase()
+	}
 	return srv
+}
+
+func (s *AppServer) initDatabase() {
+	_, _ = s.db.Exec(`CREATE TABLE IF NOT EXISTS gold_rates (
+		id SERIAL PRIMARY KEY,
+		city VARCHAR(100) NOT NULL,
+		rates JSONB NOT NULL,
+		updated_at TIMESTAMPTZ DEFAULT NOW()
+	)`)
+	_, _ = s.db.Exec(`ALTER TABLE customers ADD COLUMN IF NOT EXISTS email TEXT`)
+	s.getLatestRates()
 }
 
 func (s *AppServer) initSeedData() {
@@ -811,6 +827,27 @@ func (s *AppServer) handlePayments(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// --- Bullion Rates Helper ---
+func (s *AppServer) getLatestRates() LiveRates {
+	if s.useDB && s.db != nil {
+		var city string
+		var ratesJSON string
+		var updatedAt time.Time
+		err := s.db.QueryRow("SELECT city, rates, updated_at FROM gold_rates ORDER BY updated_at DESC LIMIT 1").Scan(&city, &ratesJSON, &updatedAt)
+		if err == nil {
+			var ratesMap map[string]float64
+			if json.Unmarshal([]byte(ratesJSON), &ratesMap) == nil && len(ratesMap) > 0 {
+				s.rates = LiveRates{
+					City:      city,
+					Rates:     ratesMap,
+					UpdatedAt: updatedAt.Format(time.RFC3339),
+				}
+			}
+		}
+	}
+	return s.rates
+}
+
 // --- Bullion Rates ---
 func (s *AppServer) handleRates(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
@@ -818,23 +855,8 @@ func (s *AppServer) handleRates(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		if s.useDB && s.db != nil {
-			var city string
-			var ratesJSON string
-			var updatedAt time.Time
-			err := s.db.QueryRow("SELECT city, rates, updated_at FROM gold_rates ORDER BY updated_at DESC LIMIT 1").Scan(&city, &ratesJSON, &updatedAt)
-			if err == nil {
-				var ratesMap map[string]float64
-				if json.Unmarshal([]byte(ratesJSON), &ratesMap) == nil {
-					s.rates = LiveRates{
-						City:      city,
-						Rates:     ratesMap,
-						UpdatedAt: updatedAt.Format(time.RFC3339),
-					}
-				}
-			}
-		}
-		jsonResponse(w, http.StatusOK, s.rates)
+		currentRates := s.getLatestRates()
+		jsonResponse(w, http.StatusOK, currentRates)
 	case http.MethodPost:
 		var rReq LiveRates
 		if err := json.NewDecoder(r.Body).Decode(&rReq); err != nil {
@@ -864,8 +886,10 @@ func (s *AppServer) handleRates(w http.ResponseWriter, r *http.Request) {
 
 // --- Public Web Passbook (Aggregated Customer Portal API) ---
 func (s *AppServer) handleCustomerPassbook(w http.ResponseWriter, r *http.Request) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	latestRates := s.getLatestRates()
 
 	custID := r.URL.Query().Get("c")
 	if custID == "" {
@@ -873,6 +897,9 @@ func (s *AppServer) handleCustomerPassbook(w http.ResponseWriter, r *http.Reques
 	}
 	if custID == "" {
 		custID = r.URL.Query().Get("mobile")
+	}
+	if custID == "" {
+		custID = r.URL.Query().Get("email")
 	}
 	mortNum := r.URL.Query().Get("m")
 	if mortNum == "" {
@@ -884,9 +911,42 @@ func (s *AppServer) handleCustomerPassbook(w http.ResponseWriter, r *http.Reques
 
 	if custID != "" {
 		for _, c := range s.customers {
-			if strings.EqualFold(c.ID, custID) || strings.EqualFold(c.Mobile, custID) {
+			if strings.EqualFold(c.ID, custID) || strings.EqualFold(c.Mobile, custID) || (c.Email != "" && strings.EqualFold(c.Email, custID)) {
 				matchedCust = &c
 				break
+			}
+		}
+
+		// Also check live PostgreSQL database if not in memory
+		if matchedCust == nil && s.useDB && s.db != nil {
+			var c Customer
+			var email, photo, secMobile, aadhaar, dob, occ, nomName, nomRel, nomPhone, tier, notes sql.NullString
+			var prefAdj, prefInt sql.NullFloat64
+			err := s.db.QueryRow(`
+				SELECT id, name, mobile, email, secondary_mobile, aadhaar_number, date_of_birth, address, city, pincode, occupation,
+				       nominee_name, nominee_relation, nominee_phone, photo_url, kyc_status, branch_id, customer_tier,
+				       preferred_broker_rate_adjustment, preferred_interest_rate, notes, created_at
+				FROM customers
+				WHERE id = $1 OR mobile = $1 OR (email IS NOT NULL AND LOWER(email) = LOWER($1))
+				LIMIT 1
+			`, custID).Scan(
+				&c.ID, &c.Name, &c.Mobile, &email, &secMobile, &aadhaar, &dob, &c.Address, &c.City, &c.Pincode, &occ,
+				&nomName, &nomRel, &nomPhone, &photo, &c.KycStatus, &c.BranchID, &tier,
+				&prefAdj, &prefInt, &notes, &c.CreatedAt,
+			)
+			if err == nil {
+				c.Email = email.String
+				c.PhotoURL = photo.String
+				c.SecondaryMobile = secMobile.String
+				c.AadhaarNumber = aadhaar.String
+				c.DateOfBirth = dob.String
+				c.Occupation = occ.String
+				c.NomineeName = nomName.String
+				c.NomineeRelation = nomRel.String
+				c.NomineePhone = nomPhone.String
+				c.CustomerTier = tier.String
+				c.Notes = notes.String
+				matchedCust = &c
 			}
 		}
 	}
@@ -946,7 +1006,7 @@ func (s *AppServer) handleCustomerPassbook(w http.ResponseWriter, r *http.Reques
 		"mortgages":        custMortgages,
 		"payments":         custPayments,
 		"totalOutstanding": totalOutstanding,
-		"rates":            s.rates,
+		"rates":            latestRates,
 		"verified":         true,
 	}
 

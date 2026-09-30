@@ -100,9 +100,9 @@ export function App() {
       const data = await backendApi.getRates();
       if (data && data.rates) {
         setLiveRates({
-          purity24K: Number(data.rates['24K']) || 7920,
-          purity22K: Number(data.rates['22K']) || 7260,
-          purity18K: Number(data.rates['18K']) || 5940,
+          purity24K: Number(data.rates['24K']) || 15270,
+          purity22K: Number(data.rates['22K']) || 14000,
+          purity18K: Number(data.rates['18K']) || 11453,
           silverPerGram: Number(data.rates['silver']) || 96,
           lastUpdated: data.updatedAt
             ? `Admin Applied Rate (${data.city || 'Branch'}) • ${new Date(data.updatedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`
@@ -126,12 +126,12 @@ export function App() {
     if (!currentCustomer) return;
     setIsLoadingLive(true);
     try {
-      const data = await backendApi.getPassbook(currentCustomer.mobile || currentCustomer.id);
+      const data = await backendApi.getPassbook(currentCustomer.mobile || currentCustomer.email || currentCustomer.id);
       if (data && data.rates && data.rates.rates) {
         setLiveRates({
-          purity24K: Number(data.rates.rates['24K']) || 7920,
-          purity22K: Number(data.rates.rates['22K']) || 7260,
-          purity18K: Number(data.rates.rates['18K']) || 5940,
+          purity24K: Number(data.rates.rates['24K']) || 15270,
+          purity22K: Number(data.rates.rates['22K']) || 14000,
+          purity18K: Number(data.rates.rates['18K']) || 11453,
           silverPerGram: Number(data.rates.rates['silver']) || 96,
           lastUpdated: data.rates.updatedAt
             ? `Admin Applied Rate (${data.rates.city || 'Branch'}) • ${new Date(data.rates.updatedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`
@@ -257,21 +257,21 @@ export function App() {
         <div className="p-3.5 rounded-2xl bg-amber-50/70 border border-amber-200/80 text-center hover:bg-amber-50 transition">
           <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">22K 916 Hallmark</div>
           <div className="text-lg sm:text-xl font-black font-mono text-amber-950 mt-1">
-            ₹{liveRates.purity22K ? liveRates.purity22K.toLocaleString('en-IN') : '7,260'}
+            ₹{liveRates.purity22K ? liveRates.purity22K.toLocaleString('en-IN') : '14,000'}
           </div>
           <div className="text-[10px] text-amber-800 font-medium">per gram</div>
         </div>
         <div className="p-3.5 rounded-2xl bg-amber-50/70 border border-amber-200/80 text-center hover:bg-amber-50 transition">
           <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">24K 999 Fine</div>
           <div className="text-lg sm:text-xl font-black font-mono text-amber-950 mt-1">
-            ₹{liveRates.purity24K ? liveRates.purity24K.toLocaleString('en-IN') : '7,920'}
+            ₹{liveRates.purity24K ? liveRates.purity24K.toLocaleString('en-IN') : '15,270'}
           </div>
           <div className="text-[10px] text-amber-800 font-medium">per gram</div>
         </div>
         <div className="p-3.5 rounded-2xl bg-amber-50/70 border border-amber-200/80 text-center hover:bg-amber-50 transition">
           <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">18K 750 Gold</div>
           <div className="text-lg sm:text-xl font-black font-mono text-amber-950 mt-1">
-            ₹{liveRates.purity18K ? liveRates.purity18K.toLocaleString('en-IN') : '5,940'}
+            ₹{liveRates.purity18K ? liveRates.purity18K.toLocaleString('en-IN') : '11,453'}
           </div>
           <div className="text-[10px] text-amber-800 font-medium">per gram</div>
         </div>

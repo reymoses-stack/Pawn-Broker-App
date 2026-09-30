@@ -1,9 +1,9 @@
 import { Customer, Mortgage, Payment, Branch, GoldRate, PawnEnquiry } from '../types';
 
 export const MOCK_GOLD_RATES: GoldRate = {
-  purity24K: 7550,
-  purity22K: 6920,
-  purity18K: 5660,
+  purity24K: 15270,
+  purity22K: 14000,
+  purity18K: 11453,
   silverPerGram: 96,
   lastUpdated: 'Live Market Benchmark • Today'
 };
