@@ -241,6 +241,7 @@ export interface SubAuaConfig {
   provider: 'SANDBOX' | 'SUREPASS' | 'CASHFREE' | 'ZOOP' | 'SETU_DIGILOCKER';
   apiKey?: string;
   clientId?: string;
+  clientSecret?: string;
   environment: 'sandbox' | 'production';
 }
 
@@ -249,18 +250,75 @@ const STORAGE_KEY_SUBAUA = 'nexus_subaua_config';
 export function getSubAuaConfig(): SubAuaConfig {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_SUBAUA);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return {
+        provider: parsed.provider || (import.meta.env.VITE_CASHFREE_CLIENT_ID ? 'CASHFREE' : 'SANDBOX'),
+        clientId: parsed.clientId || (import.meta.env.VITE_CASHFREE_CLIENT_ID as string) || '',
+        clientSecret: parsed.clientSecret || parsed.apiKey || (import.meta.env.VITE_CASHFREE_CLIENT_SECRET as string) || '',
+        apiKey: parsed.apiKey || parsed.clientSecret || (import.meta.env.VITE_CASHFREE_CLIENT_SECRET as string) || '',
+        environment: parsed.environment || (import.meta.env.VITE_CASHFREE_ENV as any) || 'sandbox'
+      };
+    }
   } catch (e) {
     console.error(e);
   }
   return {
-    provider: 'SANDBOX',
-    environment: 'sandbox'
+    provider: import.meta.env.VITE_CASHFREE_CLIENT_ID ? 'CASHFREE' : 'SANDBOX',
+    clientId: (import.meta.env.VITE_CASHFREE_CLIENT_ID as string) || '',
+    clientSecret: (import.meta.env.VITE_CASHFREE_CLIENT_SECRET as string) || '',
+    apiKey: (import.meta.env.VITE_CASHFREE_CLIENT_SECRET as string) || '',
+    environment: (import.meta.env.VITE_CASHFREE_ENV as any) || 'sandbox'
   };
 }
 
 export function saveSubAuaConfig(config: SubAuaConfig): void {
   localStorage.setItem(STORAGE_KEY_SUBAUA, JSON.stringify(config));
+}
+
+/**
+ * Tests connection to Cashfree Verification Suite
+ */
+export async function testCashfreeConnection(config: SubAuaConfig): Promise<{
+  success: boolean;
+  message: string;
+  environment: string;
+}> {
+  const clientId = config.clientId?.trim();
+  const clientSecret = (config.clientSecret || config.apiKey)?.trim();
+
+  if (!clientId || !clientSecret) {
+    return {
+      success: false,
+      message: 'Both Cashfree App ID (Client ID) and Secret Key (Client Secret) are required.',
+      environment: config.environment
+    };
+  }
+
+  try {
+    const res = await fetch('/api/cashfree/test-connection', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        clientId,
+        clientSecret,
+        environment: config.environment || 'sandbox'
+      })
+    });
+
+    const data = await res.json();
+    return {
+      success: !!data.success,
+      message: data.message || (data.success ? 'Cashfree credentials verified!' : 'Connection test failed'),
+      environment: config.environment
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      message: `Failed to reach local Cashfree proxy: ${err.message}`,
+      environment: config.environment
+    };
+  }
 }
 
 // ==========================================
@@ -281,27 +339,65 @@ export async function requestUidaiOtp(aadhaarNumber: string): Promise<{
 
   const config = getSubAuaConfig();
 
-  // If live Sub-AUA API credentials exist (e.g. Surepass / Cashfree)
-  if (config.apiKey && config.provider !== 'SANDBOX') {
+  // CASHFREE INTEGRATION
+  if (config.provider === 'CASHFREE') {
+    const clientId = config.clientId?.trim();
+    const clientSecret = (config.clientSecret || config.apiKey)?.trim();
+
+    if (!clientId || !clientSecret) {
+      throw new Error('Cashfree App ID (Client ID) and Secret Key are required. Configure them in Sub-AUA Settings.');
+    }
+
     try {
-      if (config.provider === 'SUREPASS') {
-        const response = await fetch('https://kyc-api.surepass.io/api/v1/aadhaar-v2/generate-otp', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${config.apiKey}`
-          },
-          body: JSON.stringify({ id_number: aadhaarNumber })
-        });
-        const data = await response.json();
-        if (data.success) {
-          return {
-            success: true,
-            transactionId: data.data.client_id,
-            message: `OTP sent via Surepass to Aadhaar registered mobile (${data.data.if_number || ''})`,
-            isSandbox: false
-          };
-        }
+      const response = await fetch('/api/cashfree/generate-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          aadhaarNumber,
+          clientId,
+          clientSecret,
+          environment: config.environment || 'sandbox'
+        })
+      });
+
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        throw new Error(data.message || 'Cashfree failed to dispatch OTP');
+      }
+
+      return {
+        success: true,
+        transactionId: String(data.ref_id),
+        message: data.message || (config.environment === 'sandbox' 
+          ? 'OTP dispatched via Cashfree (In Sandbox: use 111000 or SMS OTP)' 
+          : 'OTP sent to customer\'s Aadhaar-linked mobile'),
+        isSandbox: config.environment === 'sandbox'
+      };
+    } catch (err: any) {
+      console.error('Cashfree OTP error:', err);
+      throw new Error(err.message || 'Failed to dispatch Aadhaar OTP via Cashfree');
+    }
+  }
+
+  // SUREPASS INTEGRATION
+  if (config.provider === 'SUREPASS' && config.apiKey) {
+    try {
+      const response = await fetch('https://kyc-api.surepass.io/api/v1/aadhaar-v2/generate-otp', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${config.apiKey}`
+        },
+        body: JSON.stringify({ id_number: aadhaarNumber })
+      });
+      const data = await response.json();
+      if (data.success) {
+        return {
+          success: true,
+          transactionId: data.data.client_id,
+          message: `OTP sent via Surepass to Aadhaar registered mobile (${data.data.if_number || ''})`,
+          isSandbox: false
+        };
       }
     } catch (err: any) {
       console.warn('Live Sub-AUA call failed, falling back to local UIDAI sandbox simulator:', err);
@@ -314,7 +410,7 @@ export async function requestUidaiOtp(aadhaarNumber: string): Promise<{
   return {
     success: true,
     transactionId: txId,
-    message: 'UIDAI OTP dispatched successfully to Aadhaar-linked mobile number.',
+    message: 'UIDAI OTP dispatched successfully to Aadhaar-linked mobile number (Simulator Test OTP: any 6 digits).',
     isSandbox: true
   };
 }
@@ -334,8 +430,80 @@ export async function verifyUidaiOtpAndFetchKyc(params: {
 
   const clean = aadhaarNumber.replace(/\D/g, '');
   const maskedAadhaar = `XXXX-XXXX-${clean.slice(-4)}`;
+  const config = getSubAuaConfig();
 
-  // Determine official UIDAI Legal Name
+  // CASHFREE LIVE / TEST VERIFICATION
+  if (config.provider === 'CASHFREE') {
+    const clientId = config.clientId?.trim();
+    const clientSecret = (config.clientSecret || config.apiKey)?.trim();
+
+    const response = await fetch('/api/cashfree/verify-otp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        otp: otp.trim(),
+        refId: transactionId,
+        clientId,
+        clientSecret,
+        environment: config.environment || 'sandbox'
+      })
+    });
+
+    const resData = await response.json();
+    if (!response.ok || !resData.success) {
+      throw new Error(resData.message || 'Cashfree Aadhaar OTP verification failed');
+    }
+
+    const kyc = resData.data || {};
+    const details = kyc.data || kyc; // Handle both direct or nested data
+    const split = details.split_address || {};
+
+    const rawAadhaarName = details.name || details.aadhaar_name || enteredCustomerName;
+    const aadhaarLegalName = String(rawAadhaarName).trim().toUpperCase();
+
+    // Calculate name sync match result against entered customer name
+    const matchResult = compareNames(enteredCustomerName, aadhaarLegalName);
+
+    // Format address
+    let fullAddress = details.address || '';
+    if (!fullAddress && split) {
+      fullAddress = [
+        split.house,
+        split.street,
+        split.landmark,
+        split.dist,
+        split.state,
+        split.pincode
+      ].filter(Boolean).join(', ');
+    }
+    if (!fullAddress) {
+      fullAddress = 'Address as registered with UIDAI';
+    }
+
+    const genderRaw = String(details.gender || '').toUpperCase();
+    const gender: 'M' | 'F' | 'Other' = (genderRaw === 'F' || genderRaw === 'FEMALE') 
+      ? 'F' 
+      : (genderRaw === 'M' || genderRaw === 'MALE') ? 'M' : 'Other';
+
+    return {
+      maskedAadhaar,
+      aadhaarLegalName,
+      nameMatchResult: matchResult,
+      gender,
+      dob: details.dob || details.date_of_birth || '1990-01-01',
+      careOf: details.care_of || details.father_name || '',
+      address: fullAddress,
+      city: split.dist || split.city || 'Chennai',
+      state: split.state || 'Tamil Nadu',
+      pincode: split.pincode || clean.slice(-6),
+      photoUrl: details.photo_link || details.image || details.photo || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=200&auto=format&fit=crop&q=80',
+      authReference: String(details.ref_id || transactionId),
+      authTimestamp: new Date().toISOString(),
+      subAuaProvider: `Cashfree Verification (${(config.environment || 'sandbox').toUpperCase()})`
+    };
+  }
+
+  // Determine official UIDAI Legal Name for Simulation
   let aadhaarLegalName: string;
 
   if (simulateMismatch) {
@@ -345,7 +513,6 @@ export async function verifyUidaiOtpAndFetchKyc(params: {
     // Derive realistic Indian name that expands or matches entered name
     const tokens = normalizeName(enteredCustomerName);
     if (tokens.length >= 2) {
-      // e.g. "S. Ramachandran" -> "RAMACHANDRAN SUBRAMANIAN" or "Ramachandran S"
       aadhaarLegalName = tokens.map(t => t.toUpperCase()).join(' ');
     } else if (tokens.length === 1) {
       aadhaarLegalName = `${tokens[0].toUpperCase()} KUMAR`;
@@ -376,6 +543,6 @@ export async function verifyUidaiOtpAndFetchKyc(params: {
     photoUrl: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=200&auto=format&fit=crop&q=80',
     authReference: transactionId || `UIDAI-KYC-${Date.now().toString().slice(-8)}`,
     authTimestamp: new Date().toISOString(),
-    subAuaProvider: 'UIDAI Sub-AUA e-KYC Gateway'
+    subAuaProvider: 'UIDAI Sub-AUA e-KYC Gateway (Simulator)'
   };
 }

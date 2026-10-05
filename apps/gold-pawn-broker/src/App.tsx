@@ -28,6 +28,7 @@ import { CashDrawerTransactionModal } from './components/accounting/CashDrawerTr
 import { PublicCustomerPassbookView } from './components/portal/PublicCustomerPassbookView';
 import { LoginPage } from './components/auth/LoginPage';
 import { EnquiryListView } from './components/enquiries/EnquiryListView';
+import { RePledgeListView } from './components/repledge/RePledgeListView';
 import { App as CapacitorApp } from '@capacitor/app';
 
 export const AppContent: React.FC = () => {
@@ -233,6 +234,8 @@ export const AppContent: React.FC = () => {
       case 'gold_lockers':
       case 'gold_released':
         return <GoldInventoryView />;
+      case 'repledge':
+        return <RePledgeListView />;
       case 'payments':
         return <PaymentListView />;
       case 'accounts_ledger':

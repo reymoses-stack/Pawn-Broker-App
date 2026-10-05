@@ -4,14 +4,14 @@ import {
   LockerLocation, Payment, LedgerEntry, Expense, 
   AuditLog, InterestRule, BusinessSettings, KycProvider,
   DisbursementMode, PaymentMethod, GoodReturnsRateData, AuthSession,
-  RbacMatrix, RolePermissionSet, PawnEnquiry
+  RbacMatrix, RolePermissionSet, PawnEnquiry, RePledge
 } from '../types';
 import { 
   SEED_USERS, SEED_BRANCHES, SEED_BANK_ACCOUNTS, SEED_INTEREST_RULES, 
   SEED_LOCKERS, SEED_CUSTOMERS, SEED_MORTGAGES, 
   SEED_PACKETS, SEED_PAYMENTS, SEED_LEDGER, 
   SEED_EXPENSES, SEED_AUDIT_LOGS, SEED_SETTINGS,
-  DEFAULT_RBAC_MATRIX
+  DEFAULT_RBAC_MATRIX, SEED_REPLEDGES
 } from '../data/seedData';
 import { subscribeToEnquiries, updateRemoteEnquiryStatus } from '../utils/enquirySyncService';
 import { backendApi } from '../services/backendApi';
@@ -262,6 +262,16 @@ export interface AppContextType {
   enquiryToConvert: PawnEnquiry | null;
   setEnquiryToConvert: (e: PawnEnquiry | null) => void;
   convertEnquiryToMortgage: (enquiry: PawnEnquiry) => void;
+
+  // Re-Pledge / Bank Sub-Pledge Management
+  rePledges: RePledge[];
+  addRePledge: (data: Omit<RePledge, 'id' | 'createdAt' | 'updatedAt'>) => RePledge;
+  updateRePledge: (id: string, updates: Partial<RePledge>) => void;
+  markRePledgeRetrieved: (id: string, bankSettledAmount: number, notes?: string) => void;
+  closeRePledge: (id: string) => void;
+  deleteRePledge: (id: string) => void;
+  requestCustomerJewelRelease: (mortgageId: string, requestedBy: string, pickupDate: string, notes?: string) => void;
+  confirmJewelReadyForCustomer: (mortgageId: string) => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -411,6 +421,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return saved ? JSON.parse(saved) : SEED_INTEREST_RULES;
   });
 
+  const [rePledges, setRePledges] = useState<RePledge[]>(() => {
+    const saved = localStorage.getItem(STORAGE_KEY + '_repledges');
+    return saved ? JSON.parse(saved) : SEED_REPLEDGES;
+  });
+
   // Modals state
   const [selectedMortgage, setSelectedMortgage] = useState<Mortgage | null>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
@@ -541,11 +556,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       localStorage.setItem(STORAGE_KEY + '_expenses', JSON.stringify(expenses));
       localStorage.setItem(STORAGE_KEY + '_audit', JSON.stringify(auditLogs));
       localStorage.setItem(STORAGE_KEY + '_rules', JSON.stringify(interestRules));
+      localStorage.setItem(STORAGE_KEY + '_repledges', JSON.stringify(rePledges));
       localStorage.setItem(STORAGE_KEY + '_settings', JSON.stringify(settings));
     } catch (e) {
       console.error('Failed saving to localStorage', e);
     }
-  }, [customers, mortgages, packets, lockers, payments, ledger, expenses, auditLogs, interestRules, settings]);
+  }, [customers, mortgages, packets, lockers, payments, ledger, expenses, auditLogs, interestRules, settings, rePledges]);
 
   const refreshGoodReturnsRates = (cityToUse?: string, forceLive: boolean = false) => {
     const targetCity = cityToUse || goodReturnsRates.city || 'Chennai';
@@ -1245,6 +1261,217 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     logAudit('CLOSURE', 'MORTGAGE', mortgageId, `Pledge account closed and fully settled. ${notes || ''}`);
     logAudit('RELEASE', 'GOLD_PACKET', mortgage.packetId, `Gold packet released from custody to borrower.`);
+
+    // If there is an active re-pledge, close it
+    if (mortgage.rePledgeId) {
+      setRePledges(prev => prev.map(rp => {
+        if (rp.mortgageId === mortgageId) {
+          return { ...rp, custodyStatus: 'Closed', updatedAt: new Date().toISOString() };
+        }
+        return rp;
+      }));
+    }
+  };
+
+  const addRePledge = (data: Omit<RePledge, 'id' | 'createdAt' | 'updatedAt'>): RePledge => {
+    const id = `RP-2026-${Date.now().toString().slice(-4)}`;
+    const now = new Date().toISOString();
+    const newRePledge: RePledge = {
+      ...data,
+      id,
+      createdAt: now,
+      updatedAt: now
+    };
+
+    setRePledges(prev => [newRePledge, ...prev]);
+
+    // Update mortgage re-pledge link and custody status
+    setMortgages(prev => prev.map(m => {
+      if (m.id === data.mortgageId) {
+        return {
+          ...m,
+          rePledgeId: id,
+          rePledgeStatus: 'RE_PLEDGED',
+          updatedAt: now
+        };
+      }
+      return m;
+    }));
+
+    // Update packet location to the external bank/financier
+    const targetMortgage = mortgages.find(m => m.id === data.mortgageId);
+    if (targetMortgage?.packetId) {
+      setPackets(prev => prev.map(p => {
+        if (p.id === targetMortgage.packetId) {
+          return {
+            ...p,
+            status: 'Temporarily Removed',
+            movements: [
+              ...p.movements,
+              {
+                id: `MOV-${Date.now()}`,
+                timestamp: now,
+                fromLocation: `${p.lockerId} / ${p.rack} / ${p.tray}`,
+                toLocation: `${data.institutionName} (Loan #${data.bankLoanNumber})`,
+                movedBy: currentUser.name,
+                reason: `Re-pledged to ${data.institutionName} for liquidity arbitrage.`
+              }
+            ]
+          };
+        }
+        return p;
+      }));
+    }
+
+    logAudit('RE_PLEDGE', 'MORTGAGE', data.mortgageId, `Re-pledged to ${data.institutionName} (Account #${data.bankLoanNumber}) for ₹${data.bankReceivedAmount.toLocaleString('en-IN')}`);
+    return newRePledge;
+  };
+
+  const updateRePledge = (id: string, updates: Partial<RePledge>) => {
+    setRePledges(prev => prev.map(rp => {
+      if (rp.id !== id) return rp;
+      return {
+        ...rp,
+        ...updates,
+        updatedAt: new Date().toISOString()
+      };
+    }));
+  };
+
+  const markRePledgeRetrieved = (id: string, bankSettledAmount: number, notes?: string) => {
+    const now = new Date().toISOString();
+    const target = rePledges.find(rp => rp.id === id);
+    if (!target) return;
+
+    setRePledges(prev => prev.map(rp => {
+      if (rp.id !== id) return rp;
+      return {
+        ...rp,
+        custodyStatus: 'Back in Vault',
+        bankSettledAmount,
+        bankSettledDate: now,
+        notes: notes ? (rp.notes ? `${rp.notes} | ${notes}` : notes) : rp.notes,
+        updatedAt: now
+      };
+    }));
+
+    // Update mortgage
+    setMortgages(prev => prev.map(m => {
+      if (m.id === target.mortgageId) {
+        return {
+          ...m,
+          rePledgeStatus: 'BACK_IN_VAULT',
+          updatedAt: now
+        };
+      }
+      return m;
+    }));
+
+    // Update packet location back into shop vault
+    const targetMortgage = mortgages.find(m => m.id === target.mortgageId);
+    if (targetMortgage?.packetId) {
+      setPackets(prev => prev.map(p => {
+        if (p.id === targetMortgage.packetId) {
+          return {
+            ...p,
+            status: 'In Locker',
+            movements: [
+              ...p.movements,
+              {
+                id: `MOV-${Date.now()}`,
+                timestamp: now,
+                fromLocation: `${target.institutionName} (Loan #${target.bankLoanNumber})`,
+                toLocation: `${p.lockerId} / ${p.rack} / ${p.tray}`,
+                movedBy: currentUser.name,
+                reason: `Retrieved from bank. Settled ₹${bankSettledAmount.toLocaleString('en-IN')}. Restored to shop safe locker.`
+              }
+            ]
+          };
+        }
+        return p;
+      }));
+    }
+
+    logAudit('RE_PLEDGE_RETRIEVED', 'MORTGAGE', target.mortgageId, `Gold retrieved from ${target.institutionName}. Settled ₹${bankSettledAmount.toLocaleString('en-IN')}. Back in shop vault.`);
+  };
+
+  const closeRePledge = (id: string) => {
+    setRePledges(prev => prev.map(rp => {
+      if (rp.id !== id) return rp;
+      return {
+        ...rp,
+        custodyStatus: 'Closed',
+        updatedAt: new Date().toISOString()
+      };
+    }));
+  };
+
+  const deleteRePledge = (id: string) => {
+    const target = rePledges.find(rp => rp.id === id);
+    if (target) {
+      setMortgages(prev => prev.map(m => {
+        if (m.id === target.mortgageId) {
+          return {
+            ...m,
+            rePledgeId: undefined,
+            rePledgeStatus: 'IN_VAULT',
+            updatedAt: new Date().toISOString()
+          };
+        }
+        return m;
+      }));
+    }
+    setRePledges(prev => prev.filter(rp => rp.id !== id));
+  };
+
+  const requestCustomerJewelRelease = (mortgageId: string, requestedBy: string, pickupDate: string, notes?: string) => {
+    const now = new Date().toISOString();
+    setMortgages(prev => prev.map(m => {
+      if (m.id !== mortgageId) return m;
+      return {
+        ...m,
+        rePledgeStatus: m.rePledgeStatus === 'RE_PLEDGED' ? 'RELEASE_REQUESTED' : m.rePledgeStatus,
+        releaseRequest: {
+          requestedAt: now,
+          scheduledPickupDate: pickupDate,
+          customerNotes: notes,
+          status: 'Pending'
+        },
+        updatedAt: now
+      };
+    }));
+
+    setRePledges(prev => prev.map(rp => {
+      if (rp.mortgageId === mortgageId) {
+        return {
+          ...rp,
+          custodyStatus: 'Release Requested',
+          releaseRequestedAt: now,
+          releaseRequestedBy: requestedBy,
+          scheduledPickupDate: pickupDate,
+          updatedAt: now
+        };
+      }
+      return rp;
+    }));
+
+    logAudit('RELEASE_REQUEST', 'MORTGAGE', mortgageId, `Customer requested jewel pickup for ${pickupDate}. Requested by: ${requestedBy}`);
+  };
+
+  const confirmJewelReadyForCustomer = (mortgageId: string) => {
+    setMortgages(prev => prev.map(m => {
+      if (m.id !== mortgageId || !m.releaseRequest) return m;
+      return {
+        ...m,
+        releaseRequest: {
+          ...m.releaseRequest,
+          status: 'Ready'
+        },
+        updatedAt: new Date().toISOString()
+      };
+    }));
+
+    logAudit('JEWEL_STAGED', 'MORTGAGE', mortgageId, `Ornaments verified, sealed and staged at counter ready for customer handover.`);
   };
 
   const addExpense = (data: Omit<Expense, 'id' | 'createdAt' | 'branchId' | 'recordedBy'>): Expense => {
@@ -1674,6 +1901,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setBranches(SEED_BRANCHES);
     setBankAccounts(SEED_BANK_ACCOUNTS);
     setGoodReturnsRates(SEED_SETTINGS.goodReturnsLiveRates);
+    setRePledges(SEED_REPLEDGES);
     localStorage.clear();
   };
 
@@ -1694,7 +1922,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         settings,
         branches,
         bankAccounts,
-        goodReturnsRates
+        goodReturnsRates,
+        rePledges
       }
     };
     return JSON.stringify(backup, null, 2);
@@ -1717,6 +1946,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (parsed.data.branches) setBranches(parsed.data.branches);
         if (parsed.data.bankAccounts) setBankAccounts(parsed.data.bankAccounts);
         if (parsed.data.goodReturnsRates) setGoodReturnsRates(parsed.data.goodReturnsRates);
+        if (parsed.data.rePledges) setRePledges(parsed.data.rePledges);
         logAudit('SETTINGS_CHANGE', 'SETTINGS', 'DATABASE_RESTORE', 'Restored system database from JSON backup file');
         return true;
       }
@@ -2121,7 +2351,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateEnquiryStatus,
         enquiryToConvert,
         setEnquiryToConvert,
-        convertEnquiryToMortgage
+        convertEnquiryToMortgage,
+
+        // Re-Pledge / Bank Vault Sub-Pledge Management
+        rePledges,
+        addRePledge,
+        updateRePledge,
+        markRePledgeRetrieved,
+        closeRePledge,
+        deleteRePledge,
+        requestCustomerJewelRelease,
+        confirmJewelReadyForCustomer
       }}
     >
       {children}

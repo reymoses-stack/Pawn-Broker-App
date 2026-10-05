@@ -126,6 +126,189 @@ function sharedApiPlugin(): Plugin {
           return next();
         }
 
+        // ─── /api/cashfree (Sub-AUA Aadhaar Proxy) ──────────────────────────
+        if (req.url?.startsWith('/api/cashfree')) {
+          if (req.method === 'POST') {
+            let body = '';
+            req.on('data', c => { body += c; });
+            req.on('end', async () => {
+              try {
+                const payload = JSON.parse(body || '{}');
+                const isProd = payload.environment === 'production';
+                const baseUrl = isProd 
+                  ? 'https://api.cashfree.com/verification' 
+                  : 'https://sandbox.cashfree.com/verification';
+                const clientId = payload.clientId || process.env.VITE_CASHFREE_CLIENT_ID || '';
+                const clientSecret = payload.clientSecret || payload.apiKey || process.env.VITE_CASHFREE_CLIENT_SECRET || '';
+
+                if (!clientId || !clientSecret) {
+                  res.statusCode = 400;
+                  res.setHeader('Content-Type', 'application/json');
+                  return res.end(JSON.stringify({ 
+                    success: false, 
+                    message: 'Cashfree Client ID and Client Secret are required' 
+                  }));
+                }
+
+                // 1. Test Connection & Verify Credentials
+                if (req.url?.includes('/test-connection')) {
+                  try {
+                    const cfRes = await fetch(`${baseUrl}/offline-aadhaar/otp`, {
+                      method: 'POST',
+                      headers: {
+                        'Content-Type': 'application/json',
+                        'x-client-id': clientId,
+                        'x-client-secret': clientSecret,
+                      },
+                      body: JSON.stringify({ aadhaar_number: '000000000000' })
+                    });
+                    const cfData: any = await cfRes.json().catch(() => ({}));
+                    
+                    if (cfData.code === 'authentication_failed' || cfRes.status === 401) {
+                      res.statusCode = 401;
+                      res.setHeader('Content-Type', 'application/json');
+                      return res.end(JSON.stringify({ 
+                        success: false, 
+                        message: cfData.message || 'Invalid Cashfree Client ID or Client Secret' 
+                      }));
+                    }
+
+                    res.setHeader('Content-Type', 'application/json');
+                    return res.end(JSON.stringify({ 
+                      success: true, 
+                      message: `Successfully connected to Cashfree (${isProd ? 'Production' : 'Sandbox'})! Account credentials verified.`,
+                      environment: isProd ? 'production' : 'sandbox',
+                      cashfreeResponse: cfData
+                    }));
+                  } catch (err: any) {
+                    res.statusCode = 502;
+                    res.setHeader('Content-Type', 'application/json');
+                    return res.end(JSON.stringify({ 
+                      success: false, 
+                      message: `Network error connecting to Cashfree: ${err.message}` 
+                    }));
+                  }
+                }
+
+                // 2. Generate OTP
+                if (req.url?.includes('/generate-otp')) {
+                  const cleanAadhaar = String(payload.aadhaarNumber || '').replace(/\D/g, '');
+                  if (cleanAadhaar.length !== 12) {
+                    res.statusCode = 400;
+                    res.setHeader('Content-Type', 'application/json');
+                    return res.end(JSON.stringify({ success: false, message: 'Invalid 12-digit Aadhaar number' }));
+                  }
+
+                  let cfRes = await fetch(`${baseUrl}/offline-aadhaar/otp`, {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      'x-client-id': clientId,
+                      'x-client-secret': clientSecret,
+                    },
+                    body: JSON.stringify({ aadhaar_number: cleanAadhaar })
+                  });
+                  let cfData: any = await cfRes.json().catch(() => ({}));
+
+                  // Fallback to /aadhaar/otp if 404
+                  if (cfRes.status === 404) {
+                    cfRes = await fetch(`${baseUrl}/aadhaar/otp`, {
+                      method: 'POST',
+                      headers: {
+                        'Content-Type': 'application/json',
+                        'x-client-id': clientId,
+                        'x-client-secret': clientSecret,
+                      },
+                      body: JSON.stringify({ aadhaar_number: cleanAadhaar })
+                    });
+                    cfData = await cfRes.json().catch(() => ({}));
+                  }
+
+                  if (!cfRes.ok || cfData.code === 'authentication_failed' || cfData.status === 'FAILED') {
+                    res.statusCode = cfRes.status || 400;
+                    res.setHeader('Content-Type', 'application/json');
+                    return res.end(JSON.stringify({ 
+                      success: false, 
+                      message: cfData.message || 'Cashfree OTP dispatch failed',
+                      raw: cfData 
+                    }));
+                  }
+
+                  res.setHeader('Content-Type', 'application/json');
+                  return res.end(JSON.stringify({ 
+                    success: true, 
+                    ref_id: cfData.ref_id || cfData.reference_id || cfData.data?.ref_id,
+                    message: cfData.message || 'OTP sent successfully to Aadhaar-registered mobile',
+                    raw: cfData 
+                  }));
+                }
+
+                // 3. Verify OTP
+                if (req.url?.includes('/verify-otp')) {
+                  const otp = String(payload.otp || '').trim();
+                  const refId = String(payload.refId || payload.transactionId || '').trim();
+
+                  if (!otp || !refId) {
+                    res.statusCode = 400;
+                    res.setHeader('Content-Type', 'application/json');
+                    return res.end(JSON.stringify({ success: false, message: 'Missing OTP or Reference ID' }));
+                  }
+
+                  let cfRes = await fetch(`${baseUrl}/offline-aadhaar/verify`, {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      'x-client-id': clientId,
+                      'x-client-secret': clientSecret,
+                    },
+                    body: JSON.stringify({ otp, ref_id: refId })
+                  });
+                  let cfData: any = await cfRes.json().catch(() => ({}));
+
+                  // Fallback to /aadhaar/verify if 404
+                  if (cfRes.status === 404) {
+                    cfRes = await fetch(`${baseUrl}/aadhaar/verify`, {
+                      method: 'POST',
+                      headers: {
+                        'Content-Type': 'application/json',
+                        'x-client-id': clientId,
+                        'x-client-secret': clientSecret,
+                      },
+                      body: JSON.stringify({ otp, ref_id: refId })
+                    });
+                    cfData = await cfRes.json().catch(() => ({}));
+                  }
+
+                  if (!cfRes.ok || cfData.code === 'authentication_failed' || cfData.status === 'FAILED' || cfData.status === 'INVALID') {
+                    res.statusCode = cfRes.status || 400;
+                    res.setHeader('Content-Type', 'application/json');
+                    return res.end(JSON.stringify({ 
+                      success: false, 
+                      message: cfData.message || 'OTP verification failed',
+                      raw: cfData 
+                    }));
+                  }
+
+                  res.setHeader('Content-Type', 'application/json');
+                  return res.end(JSON.stringify({ 
+                    success: true, 
+                    data: cfData,
+                    message: 'Aadhaar e-KYC verified successfully via Cashfree'
+                  }));
+                }
+
+                res.statusCode = 404;
+                return res.end(JSON.stringify({ error: 'Endpoint not found' }));
+              } catch (err: any) {
+                res.statusCode = 500;
+                res.setHeader('Content-Type', 'application/json');
+                return res.end(JSON.stringify({ success: false, message: err.message || 'Internal proxy error' }));
+              }
+            });
+            return;
+          }
+        }
+
         next();
       });
     }

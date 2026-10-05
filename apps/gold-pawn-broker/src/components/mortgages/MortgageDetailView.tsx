@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { Mortgage } from '../../types';
 import { formatCurrency, formatWeight, formatDate, getRelativeDays } from '../../utils/formatters';
@@ -6,9 +6,11 @@ import {
   Gem, User, Clock, Wallet, ShieldCheck, 
   Lock, Printer, ArrowRight, CheckCircle2, 
   RotateCcw, AlertTriangle, ArrowLeft, History, FileText, TrendingUp, Award,
-  MessageCircle
+  MessageCircle, Landmark, ShieldAlert, ArrowDownToLine, Building2
 } from 'lucide-react';
 import { openWhatsApp, buildReminderMessage, buildPledgeReceiptMessage } from '../../utils/whatsappService';
+import { NewRePledgeModal } from '../repledge/NewRePledgeModal';
+import { BankRetrievalModal } from '../repledge/BankRetrievalModal';
 
 interface MortgageDetailViewProps {
   mortgage: Mortgage;
@@ -20,6 +22,7 @@ export const MortgageDetailView: React.FC<MortgageDetailViewProps> = ({ mortgage
     customers, 
     packets, 
     payments, 
+    rePledges,
     getMortgageDueInfo,
     setReceiptModalData,
     setIsPaymentModalOpen,
@@ -30,6 +33,10 @@ export const MortgageDetailView: React.FC<MortgageDetailViewProps> = ({ mortgage
     settings,
     language
   } = useApp();
+
+  const [isRePledgeModalOpen, setIsRePledgeModalOpen] = useState(false);
+  const [isRetrievalModalOpen, setIsRetrievalModalOpen] = useState(false);
+  const activeRePledge = rePledges.find(rp => rp.mortgageId === mortgage.id && rp.custodyStatus !== 'Closed');
 
   const customer = customers.find(c => c.id === mortgage.customerId);
   const packet = packets.find(p => p.id === mortgage.packetId);
@@ -108,6 +115,33 @@ export const MortgageDetailView: React.FC<MortgageDetailViewProps> = ({ mortgage
                 <CheckCircle2 className="w-3.5 h-3.5" />
                 <span>Settle & Release</span>
               </button>
+
+              {/* Re-Pledge / Bank Vault Action Button */}
+              {activeRePledge ? (
+                (activeRePledge.custodyStatus === 'Re-Pledged' || activeRePledge.custodyStatus === 'Release Requested') && (
+                  <button
+                    onClick={() => setIsRetrievalModalOpen(true)}
+                    className={`flex items-center gap-1.5 px-3.5 py-2 text-white text-xs font-black rounded-xl shadow-md transition cursor-pointer ${
+                      activeRePledge.custodyStatus === 'Release Requested'
+                        ? 'bg-rose-600 hover:bg-rose-700 animate-pulse'
+                        : 'bg-gradient-to-r from-teal-700 to-emerald-700 hover:from-teal-600'
+                    }`}
+                    title="Retrieve gold from external bank"
+                  >
+                    <ArrowDownToLine className="w-3.5 h-3.5" />
+                    <span>Retrieve from Bank</span>
+                  </button>
+                )
+              ) : (
+                <button
+                  onClick={() => setIsRePledgeModalOpen(true)}
+                  className="flex items-center gap-1.5 px-3.5 py-2 bg-gradient-to-r from-amber-800 to-amber-950 hover:from-amber-700 hover:to-amber-900 text-amber-100 text-xs font-black rounded-xl shadow-md transition cursor-pointer border border-amber-600/40"
+                  title="Forward pledge to bank for liquidity arbitrage"
+                >
+                  <Landmark className="w-3.5 h-3.5 text-amber-300" />
+                  <span>Re-Pledge to Bank</span>
+                </button>
+              )}
               <button
                 onClick={() => {
                   if (!customer?.mobile) {
@@ -163,6 +197,65 @@ export const MortgageDetailView: React.FC<MortgageDetailViewProps> = ({ mortgage
           </button>
         </div>
       </div>
+
+      {/* Re-Pledge Status & Safety Banner */}
+      {activeRePledge && (
+        <div className={`p-4 sm:p-5 rounded-3xl border shadow-xs transition ${
+          activeRePledge.custodyStatus === 'Release Requested'
+            ? 'bg-rose-50 border-2 border-rose-400 text-rose-950'
+            : activeRePledge.custodyStatus === 'Re-Pledged'
+              ? 'bg-gradient-to-r from-blue-50/90 via-amber-50/70 to-slate-50 border-amber-300 text-slate-900'
+              : 'bg-emerald-50/90 border-emerald-300 text-emerald-950'
+        }`}>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-start sm:items-center gap-3">
+              <div className={`p-2.5 rounded-2xl shrink-0 ${
+                activeRePledge.custodyStatus === 'Release Requested'
+                  ? 'bg-rose-200 text-rose-900 animate-bounce'
+                  : activeRePledge.custodyStatus === 'Re-Pledged'
+                    ? 'bg-amber-100 text-amber-900'
+                    : 'bg-emerald-100 text-emerald-900'
+              }`}>
+                {activeRePledge.custodyStatus === 'Release Requested' ? (
+                  <ShieldAlert className="w-5 h-5 text-rose-700" />
+                ) : (
+                  <Landmark className="w-5 h-5" />
+                )}
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h4 className="font-black text-sm">
+                    {activeRePledge.custodyStatus === 'Release Requested'
+                      ? '🚨 REDEMPTION SAFETY ALERT: Ornaments at External Bank!'
+                      : activeRePledge.custodyStatus === 'Re-Pledged'
+                        ? '🏛️ Ornaments Re-Pledged at External Bank'
+                        : '✅ Ornaments Retrieved — Back in Shop Vault'}
+                  </h4>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-white/80 border border-slate-300">
+                    {activeRePledge.institutionName}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-600 mt-0.5">
+                  {activeRePledge.custodyStatus === 'Release Requested'
+                    ? `Customer requested collection on ${formatDate(activeRePledge.scheduledPickupDate || '')}. Packet is in Bank Ticket #${activeRePledge.bankLoanNumber}. Retrieve from bank before handing over to borrower!`
+                    : `Ticket #${activeRePledge.bankLoanNumber} • Bank Cash: ₹${activeRePledge.bankReceivedAmount.toLocaleString('en-IN')} @ ${activeRePledge.bankInterestRate}% p.a. • Net Spread: +${activeRePledge.netSpreadMargin}% p.a. • Due: ${formatDate(activeRePledge.bankDueDate)}`}
+                </p>
+              </div>
+            </div>
+
+            {(activeRePledge.custodyStatus === 'Re-Pledged' || activeRePledge.custodyStatus === 'Release Requested') && (
+              <button
+                type="button"
+                onClick={() => setIsRetrievalModalOpen(true)}
+                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs shadow-md transition cursor-pointer flex items-center gap-1.5 shrink-0"
+              >
+                <ArrowDownToLine className="w-3.5 h-3.5" />
+                <span>Retrieve from Bank</span>
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Grid: Borrower Info & Current Due Calculation */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
@@ -457,6 +550,20 @@ export const MortgageDetailView: React.FC<MortgageDetailViewProps> = ({ mortgage
           </div>
         )}
       </div>
+
+      {/* New Re-Pledge Modal */}
+      <NewRePledgeModal
+        isOpen={isRePledgeModalOpen}
+        onClose={() => setIsRePledgeModalOpen(false)}
+        preSelectedMortgageId={mortgage.id}
+      />
+
+      {/* Bank Retrieval Modal */}
+      <BankRetrievalModal
+        isOpen={isRetrievalModalOpen}
+        onClose={() => setIsRetrievalModalOpen(false)}
+        rePledge={activeRePledge || null}
+      />
 
     </div>
   );

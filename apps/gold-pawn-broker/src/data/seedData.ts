@@ -1,7 +1,7 @@
 import { 
   User, Branch, BankAccount, Customer, Mortgage, GoldPacket, 
   LockerLocation, Payment, LedgerEntry, Expense, 
-  AuditLog, InterestRule, BusinessSettings, RbacMatrix 
+  AuditLog, InterestRule, BusinessSettings, RbacMatrix, RePledge 
 } from '../types';
 import { getGoodReturnsRatesForCity } from '../utils/goodReturnsService';
 
@@ -191,6 +191,7 @@ export const SEED_CUSTOMERS: Customer[] = [];
 export const SEED_MORTGAGES: Mortgage[] = [];
 export const SEED_PACKETS: GoldPacket[] = [];
 export const SEED_PAYMENTS: Payment[] = [];
+export const SEED_REPLEDGES: RePledge[] = [];
 export const SEED_LEDGER: LedgerEntry[] = [];
 export const SEED_EXPENSES: Expense[] = [];
 export const SEED_AUDIT_LOGS: AuditLog[] = [];

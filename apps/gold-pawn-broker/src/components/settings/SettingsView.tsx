@@ -11,8 +11,14 @@ import {
   Landmark, Building2, ArrowLeftRight, CreditCard,
   Plus, Trash2, Edit3, Eye, EyeOff, Check, X,
   ShieldCheck, ArrowRight, ArrowDownLeft, ArrowUpRight,
-  Wallet, Truck
+  Wallet, Truck, KeyRound, Sparkles, RefreshCw, AlertTriangle, Smartphone, HelpCircle
 } from 'lucide-react';
+import { 
+  getSubAuaConfig, 
+  saveSubAuaConfig, 
+  testCashfreeConnection, 
+  SubAuaConfig 
+} from '../../utils/uidaiVerificationService';
 
 const COMMON_BANKS = [
   'State Bank of India',
@@ -53,7 +59,11 @@ export const SettingsView: React.FC = () => {
     language 
   } = useApp();
 
-  const [activeTab, setActiveTab] = useState<'general' | 'bank_accounts' | 'branches' | 'doorstep' | 'database'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'bank_accounts' | 'branches' | 'doorstep' | 'aadhaar_kyc' | 'database'>('general');
+  const [subAuaConfig, setSubAuaConfig] = useState<SubAuaConfig>(getSubAuaConfig);
+  const [testingConnection, setTestingConnection] = useState(false);
+  const [connectionResult, setConnectionResult] = useState<{ success: boolean; message: string; environment?: string } | null>(null);
+  const [savedKycAlert, setSavedKycAlert] = useState(false);
 
   const [formSettings, setFormSettings] = useState<BusinessSettings>(() => ({
     ...settings,
@@ -448,6 +458,22 @@ export const SettingsView: React.FC = () => {
         >
           <Truck className="w-4 h-4" />
           <span>{language === 'ta' ? 'வீட்டு சேவை பகுதிகள்' : 'Doorstep Service'}</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('aadhaar_kyc')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl font-bold transition whitespace-nowrap ${
+            activeTab === 'aadhaar_kyc'
+              ? 'bg-purple-600 text-white shadow-sm'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-purple-50'
+          }`}
+        >
+          <ShieldCheck className="w-4 h-4" />
+          <span>{language === 'ta' ? 'ஆதார் KYC (Cashfree)' : 'Aadhaar e-KYC (Cashfree)'}</span>
+          <span className="bg-purple-200/80 text-purple-950 px-1.5 py-0.2 rounded-full text-[10px] font-mono">
+            {subAuaConfig.provider === 'CASHFREE' ? (subAuaConfig.environment === 'production' ? 'Live' : 'Test') : 'Demo'}
+          </span>
         </button>
 
         <button
@@ -992,6 +1018,252 @@ export const SettingsView: React.FC = () => {
       {activeTab === 'doorstep' && (
         <div className="animate-in fade-in duration-150">
           <DoorstepPincodeManager />
+        </div>
+      )}
+
+      {/* TAB 6: AADHAAR e-KYC (CASHFREE) SETTINGS */}
+      {activeTab === 'aadhaar_kyc' && (
+        <div className="p-6 liquid-glass-card border border-purple-200/80 rounded-3xl shadow-xs space-y-6 text-xs animate-in fade-in duration-150">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-purple-100 pb-4">
+            <div className="flex items-center gap-3">
+              <div className="p-3 bg-gradient-to-br from-purple-500 to-indigo-600 text-white rounded-2xl shadow-md">
+                <ShieldCheck className="w-6 h-6" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-base font-extrabold text-slate-900">
+                    Aadhaar e-KYC & Cashfree Verification Suite
+                  </h3>
+                  <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${
+                    subAuaConfig.provider === 'CASHFREE' 
+                      ? 'bg-purple-100 text-purple-900 border-purple-300' 
+                      : 'bg-slate-100 text-slate-700 border-slate-300'
+                  }`}>
+                    {subAuaConfig.provider === 'CASHFREE' ? `Active (${subAuaConfig.environment.toUpperCase()})` : 'Simulator Mode'}
+                  </span>
+                </div>
+                <p className="text-slate-500 text-xs mt-0.5">
+                  Sub-AUA UIDAI Gateway for Real-Time Aadhaar OTP verification, Demographics Extraction & Name Sync
+                </p>
+              </div>
+            </div>
+
+            {savedKycAlert && (
+              <div className="px-3 py-1.5 bg-emerald-100 border border-emerald-300 text-emerald-900 rounded-xl text-xs font-bold flex items-center gap-1.5 animate-in fade-in">
+                <Check className="w-4 h-4 text-emerald-600" />
+                <span>Settings Saved to Local Storage</span>
+              </div>
+            )}
+          </div>
+
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              saveSubAuaConfig(subAuaConfig);
+              setSavedKycAlert(true);
+              setTimeout(() => setSavedKycAlert(false), 3000);
+            }}
+            className="space-y-4"
+          >
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block font-bold text-slate-700 mb-1.5">
+                  Licensed Sub-AUA / KYC Aggregator
+                </label>
+                <select
+                  value={subAuaConfig.provider}
+                  onChange={(e) => {
+                    setSubAuaConfig({ ...subAuaConfig, provider: e.target.value as any });
+                    setConnectionResult(null);
+                  }}
+                  className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl font-bold text-slate-900 focus:ring-2 focus:ring-purple-400 focus:outline-none"
+                >
+                  <option value="CASHFREE">⚡ Cashfree Verification Suite (Aadhaar OTP)</option>
+                  <option value="SANDBOX">UIDAI High-Fidelity Simulator (Offline Demo)</option>
+                  <option value="SUREPASS">Surepass Technologies (Aadhaar OKYC v2)</option>
+                  <option value="ZOOP">Zoop.one Aadhaar API</option>
+                  <option value="SETU_DIGILOCKER">DigiLocker / Setu API</option>
+                </select>
+                <p className="text-[11px] text-slate-500 mt-1">
+                  Cashfree directly bridges to UIDAI CIDR for real-time OTP delivery & demographics.
+                </p>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1.5">
+                  Gateway Operating Environment
+                </label>
+                <select
+                  value={subAuaConfig.environment}
+                  onChange={(e) => {
+                    setSubAuaConfig({ ...subAuaConfig, environment: e.target.value as any });
+                    setConnectionResult(null);
+                  }}
+                  className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl font-bold text-slate-900 focus:ring-2 focus:ring-purple-400 focus:outline-none"
+                >
+                  <option value="sandbox">Sandbox / Test Environment (Uses Cashfree Test Credits)</option>
+                  <option value="production">Production Live Environment (Real UIDAI Dispatches)</option>
+                </select>
+                <p className="text-[11px] text-slate-500 mt-1">
+                  Select Sandbox to test with your test credits without incurring live production charges.
+                </p>
+              </div>
+            </div>
+
+            {subAuaConfig.provider === 'CASHFREE' && (
+              <div className="p-4 bg-purple-50/60 border border-purple-200 rounded-2xl space-y-4">
+                <div className="flex items-center justify-between border-b border-purple-200/60 pb-2">
+                  <span className="font-extrabold text-purple-950 text-xs flex items-center gap-1.5">
+                    <KeyRound className="w-4 h-4 text-purple-700" />
+                    <span>Cashfree Merchant Dashboard Credentials</span>
+                  </span>
+                  <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-purple-200 text-purple-900 font-mono font-bold">
+                    Target: https://{subAuaConfig.environment === 'production' ? 'api' : 'sandbox'}.cashfree.com/verification
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">
+                      Cashfree App ID (Client ID) *
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. CF123456... or test App ID"
+                      value={subAuaConfig.clientId || ''}
+                      onChange={(e) => setSubAuaConfig({ ...subAuaConfig, clientId: e.target.value })}
+                      className="w-full px-3.5 py-2 bg-white border border-slate-300 rounded-xl font-mono text-xs focus:ring-2 focus:ring-purple-400 focus:outline-none"
+                    />
+                    <p className="text-[10px] text-slate-500 mt-1">
+                      Found in Cashfree Dashboard &gt; Developers &gt; API Keys
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">
+                      Cashfree Secret Key (Client Secret) *
+                    </label>
+                    <input
+                      type="password"
+                      placeholder="e.g. cfsk_ma_test_..."
+                      value={subAuaConfig.clientSecret || subAuaConfig.apiKey || ''}
+                      onChange={(e) => setSubAuaConfig({ 
+                        ...subAuaConfig, 
+                        clientSecret: e.target.value,
+                        apiKey: e.target.value 
+                      })}
+                      className="w-full px-3.5 py-2 bg-white border border-slate-300 rounded-xl font-mono text-xs focus:ring-2 focus:ring-purple-400 focus:outline-none"
+                    />
+                    <p className="text-[10px] text-slate-500 mt-1">
+                      Secret key is proxied locally on your machine for maximum security
+                    </p>
+                  </div>
+                </div>
+
+                {/* Connection Tester */}
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pt-2 border-t border-purple-200/60">
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={testingConnection || !subAuaConfig.clientId}
+                      onClick={async () => {
+                        setTestingConnection(true);
+                        setConnectionResult(null);
+                        try {
+                          const res = await testCashfreeConnection(subAuaConfig);
+                          setConnectionResult(res);
+                        } catch (err: any) {
+                          setConnectionResult({ success: false, message: err.message || 'Connection failed' });
+                        } finally {
+                          setTestingConnection(false);
+                        }
+                      }}
+                      className="px-4 py-2 bg-purple-700 hover:bg-purple-600 disabled:opacity-50 text-white font-bold rounded-xl text-xs transition flex items-center gap-2 shadow-xs"
+                    >
+                      {testingConnection ? (
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Sparkles className="w-4 h-4" />
+                      )}
+                      <span>{testingConnection ? 'Testing Connection...' : 'Test Connection & Credentials'}</span>
+                    </button>
+
+                    <button
+                      type="submit"
+                      className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl text-xs transition shadow-xs"
+                    >
+                      Save Configuration
+                    </button>
+                  </div>
+
+                  {connectionResult && (
+                    <div className="w-full space-y-2">
+                      <div className={`px-3 py-2 rounded-xl font-bold text-xs flex items-center gap-1.5 ${
+                        connectionResult.success 
+                          ? 'bg-emerald-100 text-emerald-900 border border-emerald-300' 
+                          : 'bg-rose-100 text-rose-900 border border-rose-300'
+                      }`}>
+                        {connectionResult.success ? (
+                          <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+                        ) : (
+                          <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                        )}
+                        <span>{connectionResult.message}</span>
+                      </div>
+
+                      {connectionResult.message.includes('IP not whitelisted') && (
+                        <div className="p-3 bg-white border border-rose-300 rounded-2xl text-[11px] space-y-2 text-slate-700 shadow-xs">
+                          <div className="font-extrabold text-rose-900 flex items-center justify-between">
+                            <span>🚨 Cashfree Security Gate: Whitelist Your Current IP</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const ip = connectionResult.message.match(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/)?.[0] || '122.183.37.190';
+                                navigator.clipboard.writeText(ip);
+                                alert(`Copied IP: ${ip} to clipboard!`);
+                              }}
+                              className="px-2.5 py-1 bg-rose-100 hover:bg-rose-200 text-rose-800 rounded-lg font-mono font-bold text-[10px] border border-rose-300 transition"
+                            >
+                              Copy IP: 122.183.37.190
+                            </button>
+                          </div>
+                          <ol className="list-decimal pl-4 space-y-1 text-[10px] text-slate-600">
+                            <li>Open your <a href="https://merchant.cashfree.com/" target="_blank" rel="noreferrer" className="text-blue-600 underline font-semibold">Cashfree Merchant Dashboard</a>.</li>
+                            <li>Switch to <strong>Verification Suite</strong> &gt; ensure the <strong>TEST</strong> environment toggle is on.</li>
+                            <li>Go to <strong>Developers &gt; IP Whitelist</strong>.</li>
+                            <li>Click <strong>Add IP</strong> and paste <code className="bg-slate-100 px-1.5 py-0.5 rounded text-rose-700 font-mono font-bold">122.183.37.190</code>.</li>
+                            <li>Save, wait 30-60 seconds for Cashfree's gateway to sync, then click <strong>Test Connection & Credentials</strong> again!</li>
+                          </ol>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Testing Guide */}
+                <div className="p-3.5 bg-white border border-purple-200 rounded-2xl space-y-2">
+                  <div className="flex items-center gap-2 font-bold text-slate-900 text-xs">
+                    <HelpCircle className="w-4 h-4 text-purple-700" />
+                    <span>How to Test with Real Data & Test Credits</span>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-[11px] text-slate-600">
+                    <div className="p-2.5 bg-purple-50/40 rounded-xl border border-purple-100">
+                      <strong className="block text-purple-950 font-bold mb-1">1. Test Credits</strong>
+                      <span>Cashfree credits are charged only per successful verification. Your test balance lets you run end-to-end verification without limits.</span>
+                    </div>
+                    <div className="p-2.5 bg-purple-50/40 rounded-xl border border-purple-100">
+                      <strong className="block text-purple-950 font-bold mb-1">2. Universal OTP (111000)</strong>
+                      <span>In Cashfree Sandbox, the universal test OTP is <strong>111000</strong>. Enter any valid 12-digit Aadhaar and verify instantly.</span>
+                    </div>
+                    <div className="p-2.5 bg-purple-50/40 rounded-xl border border-purple-100">
+                      <strong className="block text-purple-950 font-bold mb-1">3. Live Name Matching</strong>
+                      <span>The customer's real registered legal name, address, and photo will be retrieved and compared with our Indian Name Sync engine.</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </form>
         </div>
       )}
 

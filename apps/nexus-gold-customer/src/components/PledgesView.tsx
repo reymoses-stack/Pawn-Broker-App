@@ -3,26 +3,30 @@ import { Mortgage, Payment } from '../types';
 import { formatCurrency, formatWeight, formatDate, calculateInterestBreakdown } from '../utils/formatters';
 import { 
   ShieldCheck, Eye, Printer, ChevronDown, 
-  ChevronUp, Sparkles, Layers, Gem 
+  ChevronUp, Sparkles, Layers, Gem, Clock, Lock 
 } from 'lucide-react';
 import { Language, translations } from '../i18n/translations';
+import { ScheduleReleaseModal } from './ScheduleReleaseModal';
 
 interface PledgesViewProps {
   mortgages: Mortgage[];
   payments: Payment[];
   language: Language;
   onOpenReceipt: (mortgage: Mortgage) => void;
+  onRequestRelease?: (mortgageId: string, pickupDate: string, notes?: string) => void;
 }
 
 export const PledgesView: React.FC<PledgesViewProps> = ({
   mortgages,
   payments,
   language,
-  onOpenReceipt
+  onOpenReceipt,
+  onRequestRelease
 }) => {
   const t = translations[language];
   const [expandedLoanId, setExpandedLoanId] = useState<string | null>(mortgages[0]?.id || null);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [schedulingMortgage, setSchedulingMortgage] = useState<Mortgage | null>(null);
 
   const toggleExpand = (id: string) => {
     setExpandedLoanId(expandedLoanId === id ? null : id);
@@ -257,14 +261,36 @@ export const PledgesView: React.FC<PledgesViewProps> = ({
                       <span>{t.insuredVault}</span>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => onOpenReceipt(mortgage)}
-                      className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs shadow-md shadow-amber-500/20 transition flex items-center gap-2 cursor-pointer"
-                    >
-                      <Printer className="w-4 h-4" />
-                      <span>{t.viewReceipt}</span>
-                    </button>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {mortgage.releaseRequest ? (
+                        <div className="px-3 py-1.5 rounded-xl bg-emerald-50 border border-emerald-300 text-emerald-950 font-bold text-xs flex items-center gap-1.5 shadow-2xs">
+                          <Clock className="w-3.5 h-3.5 text-emerald-700" />
+                          <span>
+                            {language === 'ta'
+                              ? `மீட்பு பதிவு: ${formatDate(mortgage.releaseRequest.scheduledPickupDate)}`
+                              : `Collection Booked: ${formatDate(mortgage.releaseRequest.scheduledPickupDate)}`}
+                          </span>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setSchedulingMortgage(mortgage)}
+                          className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-amber-300 font-bold text-xs shadow-xs transition flex items-center gap-1.5 cursor-pointer active:scale-95"
+                        >
+                          <Lock className="w-3.5 h-3.5 text-amber-400" />
+                          <span>{language === 'ta' ? 'நகைகள் மீட்பு கோரிக்கை' : 'Schedule Jewel Release'}</span>
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() => onOpenReceipt(mortgage)}
+                        className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs shadow-md shadow-amber-500/20 transition flex items-center gap-2 cursor-pointer active:scale-95"
+                      >
+                        <Printer className="w-4 h-4" />
+                        <span>{t.viewReceipt}</span>
+                      </button>
+                    </div>
                   </div>
 
                 </div>
@@ -291,6 +317,21 @@ export const PledgesView: React.FC<PledgesViewProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Schedule Release Modal */}
+      {schedulingMortgage && (
+        <ScheduleReleaseModal
+          isOpen={!!schedulingMortgage}
+          onClose={() => setSchedulingMortgage(null)}
+          mortgage={schedulingMortgage}
+          language={language}
+          onConfirm={(date, notes) => {
+            if (onRequestRelease) {
+              onRequestRelease(schedulingMortgage.id, date, notes);
+            }
+          }}
+        />
       )}
     </div>
   );

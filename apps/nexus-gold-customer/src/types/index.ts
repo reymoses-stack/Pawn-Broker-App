@@ -47,6 +47,12 @@ export interface Mortgage {
   items: MortgageItem[];
   totalValuation: number;
   tokenNumber: string;
+  releaseRequest?: {
+    requestedAt: string;
+    scheduledPickupDate: string;
+    customerNotes?: string;
+    status: 'Pending' | 'Ready' | 'Delivered';
+  };
   notes?: string;
 }
 

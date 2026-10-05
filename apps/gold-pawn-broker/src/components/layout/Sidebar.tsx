@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Users, Gem, Receipt, 
   BookOpen, BarChart3, ShieldCheck, Settings, 
   Lock, UserCog, LogOut, Crown,
-  AlertTriangle, CheckCircle2, ChevronRight, Sparkles, Plus, X
+  AlertTriangle, CheckCircle2, ChevronRight, Sparkles, Plus, X, Landmark
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -18,6 +18,7 @@ export const Sidebar: React.FC<SidebarProps> = () => {
     mortgages, 
     customers, 
     packets,
+    rePledges,
     currentUser,
     logout,
     setIsNewMortgageOpen,
@@ -34,6 +35,7 @@ export const Sidebar: React.FC<SidebarProps> = () => {
   const dueMortgagesCount = mortgages.filter(m => m.status === 'Due').length;
   const pendingKycCount = customers.filter(c => c.kycStatus === 'Pending' || c.kycStatus === 'In Progress').length;
   const inVaultPacketsCount = packets.filter(p => p.status === 'In Locker').length;
+  const rePledgeAlertCount = rePledges.filter(rp => rp.custodyStatus === 'Release Requested').length;
 
   const navItems = [
     {
@@ -86,6 +88,18 @@ export const Sidebar: React.FC<SidebarProps> = () => {
       iconColor: 'text-yellow-600',
       badge: null,
       isActive: activeTab.startsWith('gold')
+    },
+    {
+      id: 'repledge',
+      label: language === 'ta' ? 'மறு அடமானம் (Bank Vault)' : 'Re-Pledge & Bank Vault',
+      icon: Landmark,
+      iconColor: 'text-amber-700',
+      badge: rePledgeAlertCount > 0 ? (
+        <span className="bg-rose-500 text-white text-[9px] font-black px-1.5 py-0.2 rounded-full shadow-2xs animate-pulse">
+          {rePledgeAlertCount} ALERT
+        </span>
+      ) : null,
+      isActive: activeTab === 'repledge'
     },
     {
       id: 'accounts_ledger',

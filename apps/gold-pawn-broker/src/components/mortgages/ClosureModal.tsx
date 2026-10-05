@@ -17,6 +17,8 @@ export const ClosureModal: React.FC<ClosureModalProps> = ({ mortgage, onClose })
   const { 
     customers, 
     packets, 
+    payments, 
+    rePledges,
     receivePayment, 
     closeMortgageAndReleaseGold, 
     getMortgageDueInfo, 
@@ -27,6 +29,7 @@ export const ClosureModal: React.FC<ClosureModalProps> = ({ mortgage, onClose })
   const customer = customers.find(c => c.id === mortgage.customerId);
   const packet = packets.find(p => p.id === mortgage.packetId);
   const dueInfo = getMortgageDueInfo(mortgage);
+  const activeRePledge = rePledges.find(rp => rp.mortgageId === mortgage.id && (rp.custodyStatus === 'Re-Pledged' || rp.custodyStatus === 'Release Requested'));
 
   const principal = mortgage.outstandingPrincipal;
   const interest = dueInfo?.baseInterest || 0;
@@ -45,6 +48,11 @@ export const ClosureModal: React.FC<ClosureModalProps> = ({ mortgage, onClose })
 
   const handleFinalClosure = (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (activeRePledge) {
+      alert(`🚨 CANNOT RELEASE JEWELS TO BORROWER!\n\nThese ornaments are currently RE-PLEDGED at ${activeRePledge.institutionName} (Loan #${activeRePledge.bankLoanNumber}).\n\nPlease retrieve the ornaments from the bank first using the 'Re-Pledge & Bank Vault' module before releasing to the customer.`);
+      return;
+    }
 
     if (!idVerificationConfirmed || !goldWeightVerified) {
       alert('Please check all mandatory physical inspection & identity gates.');
@@ -172,6 +180,22 @@ export const ClosureModal: React.FC<ClosureModalProps> = ({ mortgage, onClose })
               </span>
               <span className="font-mono font-black text-slate-800">Packet: {mortgage.packetId}</span>
             </div>
+
+            {activeRePledge && (
+              <div className="p-3.5 rounded-2xl bg-rose-50 border-2 border-rose-400 text-rose-950 space-y-1.5">
+                <div className="flex items-center gap-2 font-black text-xs text-rose-800">
+                  <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>CRITICAL ALERT: ORNAMENTS ARE CURRENTLY AT EXTERNAL BANK!</span>
+                </div>
+                <p className="text-[11px] text-rose-900 leading-relaxed font-medium">
+                  This jewel packet was re-pledged to <strong>{activeRePledge.institutionName}</strong> under Ticket #{activeRePledge.bankLoanNumber}. You must arrange funds, redeem the packet from the bank, and confirm it is physically in your shop vault before handing it over to the customer.
+                </p>
+                <div className="text-[10px] text-rose-700 font-bold flex justify-between pt-1">
+                  <span>Bank Cash Borrowed: {formatCurrency(activeRePledge.bankReceivedAmount)}</span>
+                  <span>Bank Due: {formatDate(activeRePledge.bankDueDate)}</span>
+                </div>
+              </div>
+            )}
 
             <div className="p-2.5 bg-amber-50/50 rounded-xl border border-amber-200/70 flex items-center justify-between text-xs">
               <div>

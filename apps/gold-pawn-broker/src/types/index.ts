@@ -197,6 +197,50 @@ export interface Mortgage {
   createdBy: string;
   approvedBy: string;
   lastPaymentDate?: string;
+  rePledgeId?: string;
+  rePledgeStatus?: 'IN_VAULT' | 'RE_PLEDGED' | 'RELEASE_REQUESTED' | 'BACK_IN_VAULT';
+  releaseRequest?: {
+    requestedAt: string;
+    scheduledPickupDate: string;
+    customerNotes?: string;
+    status: 'Pending' | 'Ready' | 'Delivered';
+  };
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type RePledgeDestinationType = 'Bank' | 'NBFC' | 'Wholesale Broker' | 'Other';
+export type RePledgeCustodyStatus = 'Re-Pledged' | 'Release Requested' | 'Back in Vault' | 'Closed';
+
+export interface RePledge {
+  id: string;
+  mortgageId: string;
+  mortgageNumber: string;
+  customerId: string;
+  customerName: string;
+  customerMobile: string;
+  branchId: string;
+  destinationType: RePledgeDestinationType;
+  institutionName: string; // e.g. "State Bank of India - Anna Nagar"
+  bankLoanNumber: string; // e.g. "SBI-GL-8849201"
+  accountHolderName: string; // e.g. "S. Rajesh (Owner)"
+  dateMoved: string; // YYYY-MM-DD
+  bankDueDate: string; // YYYY-MM-DD
+  appraisedNetWeight: number; // in grams
+  bankValuationPerGram: number; // ₹ per gram
+  bankReceivedAmount: number; // amount received from bank
+  retailLoanAmount: number; // original amount lent to customer
+  bankInterestRate: number; // e.g. 9.25% p.a.
+  customerInterestRate: number; // e.g. 21.0% p.a.
+  netSpreadMargin: number; // customerRate - bankRate
+  bankPacketReference?: string; // bank locker bag/packet tag
+  custodyStatus: RePledgeCustodyStatus;
+  releaseRequestedAt?: string;
+  releaseRequestedBy?: string;
+  scheduledPickupDate?: string;
+  bankSettledAmount?: number;
+  bankSettledDate?: string;
+  notes?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -339,7 +383,7 @@ export interface AuditLog {
   userName: string;
   userRole: UserRole;
   branchId: string;
-  action: 'CREATE' | 'UPDATE' | 'APPROVE' | 'PAYMENT' | 'REVERSAL' | 'RENEWAL' | 'CLOSURE' | 'RELEASE' | 'KYC_VERIFY' | 'MOVE_PACKET' | 'SETTINGS_CHANGE' | 'USER_LOGIN' | 'USER_LOGOUT' | 'PASSWORD_CHANGE' | 'CREATE_EMPLOYEE' | 'UPDATE_EMPLOYEE' | 'RESET_PASSWORD' | 'DELETE_EMPLOYEE';
+  action: 'CREATE' | 'UPDATE' | 'APPROVE' | 'PAYMENT' | 'REVERSAL' | 'RENEWAL' | 'CLOSURE' | 'RELEASE' | 'KYC_VERIFY' | 'MOVE_PACKET' | 'SETTINGS_CHANGE' | 'USER_LOGIN' | 'USER_LOGOUT' | 'PASSWORD_CHANGE' | 'CREATE_EMPLOYEE' | 'UPDATE_EMPLOYEE' | 'RESET_PASSWORD' | 'DELETE_EMPLOYEE' | 'RE_PLEDGE' | 'RE_PLEDGE_RETRIEVED' | 'RELEASE_REQUEST' | 'JEWEL_STAGED';
   entityType: 'MORTGAGE' | 'CUSTOMER' | 'PAYMENT' | 'EXPENSE' | 'GOLD_PACKET' | 'KYC' | 'SETTINGS' | 'AUTH' | 'STAFF_MANAGEMENT';
   entityId: string;
   oldValue?: string;

@@ -52,6 +52,7 @@ export const CustomerFormModal: React.FC<CustomerFormModalProps> = ({ onClose, c
   const [isVerifyingUidai, setIsVerifyingUidai] = useState(false);
   const [uidaiDetails, setUidaiDetails] = useState<UidaiKycDetails | null>(null);
   const [uidaiError, setUidaiError] = useState<string | null>(null);
+  const [uidaiTransactionId, setUidaiTransactionId] = useState('');
 
   const handleAadhaarInputChange = (val: string) => {
     const cleaned = val.replace(/\D/g, '').slice(0, 12);
@@ -70,7 +71,8 @@ export const CustomerFormModal: React.FC<CustomerFormModalProps> = ({ onClose, c
     }
     setUidaiError(null);
     try {
-      await requestUidaiOtp(formData.aadhaarNumber);
+      const res = await requestUidaiOtp(formData.aadhaarNumber);
+      setUidaiTransactionId(res.transactionId);
       setUidaiOtpSent(true);
       setUidaiOtpCode('');
       setUidaiDetails(null);
@@ -91,7 +93,7 @@ export const CustomerFormModal: React.FC<CustomerFormModalProps> = ({ onClose, c
         aadhaarNumber: formData.aadhaarNumber,
         otp: uidaiOtpCode,
         enteredCustomerName: formData.name,
-        transactionId: `UIDAI-FRM-${Date.now().toString().slice(-6)}`
+        transactionId: uidaiTransactionId || `UIDAI-FRM-${Date.now().toString().slice(-6)}`
       });
       setUidaiDetails(details);
     } catch (err: any) {

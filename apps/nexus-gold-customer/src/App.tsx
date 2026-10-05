@@ -216,6 +216,68 @@ export function App() {
     });
   };
 
+  const handleRequestRelease = (mortgageId: string, pickupDate: string, notes?: string) => {
+    const now = new Date().toISOString();
+    setCustomerMortgages(prev => prev.map(m => {
+      if (m.id !== mortgageId) return m;
+      return {
+        ...m,
+        releaseRequest: {
+          requestedAt: now,
+          scheduledPickupDate: pickupDate,
+          customerNotes: notes,
+          status: 'Pending'
+        }
+      };
+    }));
+
+    // If running in localhost shared browser, immediately alert broker POS
+    try {
+      const brokerMortgagesKey = 'nexus_gold_pawn_os_v3_clean_mortgages';
+      const savedBrokerMortgages = localStorage.getItem(brokerMortgagesKey);
+      if (savedBrokerMortgages) {
+        const parsed = JSON.parse(savedBrokerMortgages);
+        const updated = parsed.map((m: any) => {
+          if (m.id === mortgageId || m.mortgageNumber === mortgageId) {
+            return {
+              ...m,
+              rePledgeStatus: m.rePledgeStatus === 'RE_PLEDGED' ? 'RELEASE_REQUESTED' : m.rePledgeStatus,
+              releaseRequest: {
+                requestedAt: now,
+                scheduledPickupDate: pickupDate,
+                customerNotes: notes,
+                status: 'Pending'
+              }
+            };
+          }
+          return m;
+        });
+        localStorage.setItem(brokerMortgagesKey, JSON.stringify(updated));
+      }
+
+      const rePledgesKey = 'nexus_gold_pawn_os_v3_clean_repledges';
+      const savedRePledges = localStorage.getItem(rePledgesKey);
+      if (savedRePledges) {
+        const parsed = JSON.parse(savedRePledges);
+        const updated = parsed.map((rp: any) => {
+          if (rp.mortgageId === mortgageId || rp.mortgageNumber === mortgageId) {
+            return {
+              ...rp,
+              custodyStatus: 'Release Requested',
+              releaseRequestedAt: now,
+              releaseRequestedBy: 'Customer App',
+              scheduledPickupDate: pickupDate
+            };
+          }
+          return rp;
+        });
+        localStorage.setItem(rePledgesKey, JSON.stringify(updated));
+      }
+    } catch (e) {
+      console.warn('Failed writing release request to local shared store', e);
+    }
+  };
+
   if (!currentCustomer) {
     return (
       <LoginView
@@ -528,6 +590,7 @@ export function App() {
                 payments={customerPayments}
                 language={language}
                 onOpenReceipt={mortgage => setReceiptModal({ mortgage })}
+                onRequestRelease={handleRequestRelease}
               />
             )}
           </div>
